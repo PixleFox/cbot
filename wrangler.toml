@@ -1,9 +1,13 @@
-name = "telegrambot"
+name = "cbot"
 main = "telegram-multipurpose-worker.js"
 compatibility_date = "2026-07-20"
 
-# Secrets are intentionally not stored here.
-# Add BOT_TOKEN, ADMIN_CHAT_ID, and optional CHANNEL_ID in Cloudflare dashboard.
-#
-# KV binding must be connected in the dashboard with this exact variable name:
-# BOT_KV
+[vars]
+ADMIN_CHAT_ID = "7204112173"
+
+[[kv_namespaces]]
+binding = "BOT_KV"
+id = "618015e3fa1f46028300b92e16cf5da6"
+
+# Keep BOT_TOKEN only in Cloudflare Secrets, never in GitHub.
+# Optional: add CHANNEL_ID in Cloudflare if you prefer a numeric channel id.
