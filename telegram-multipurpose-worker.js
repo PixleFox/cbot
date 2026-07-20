@@ -1,5 +1,10 @@
-const TEST_KEY = "test:cuckold_fetish_research_v1";
+const CHANNEL_USERNAME = "@cucksclub";
 const QUESTION_COUNT = 10;
+const MAX_TEXT_LENGTH = 2800;
+const MAX_PHOTO_CAPTION_LENGTH = 900;
+const POST_COOLDOWN_SECONDS = 90;
+const BOOKING_COOLDOWN_SECONDS = 60;
+const TEST_COOLDOWN_SECONDS = 20;
 
 const QUESTIONS = [
   {
@@ -95,28 +100,37 @@ const QUESTIONS = [
 ];
 
 const MAIN_MENU = [
-  [{ text: "آزمون پژوهشی", callback_data: "menu:test" }],
-  [{ text: "نوبت مشاوره", callback_data: "menu:booking" }],
-  [{ text: "چت ناشناس", callback_data: "menu:anonymous" }],
-  [{ text: "ارسال پست برای تایید", callback_data: "menu:submit" }]
+  [{ text: "🧪 آزمون پژوهشی", callback_data: "menu:test" }],
+  [{ text: "📅 نوبت مشاوره", callback_data: "menu:booking" }],
+  [{ text: "📝 ارسال پست برای تایید", callback_data: "menu:submit" }],
+  [{ text: "ℹ️ راهنما", callback_data: "menu:help" }]
+];
+
+const ADMIN_MENU = [
+  [{ text: "➕ افزودن زمان مشاوره", callback_data: "admin:add_slot" }],
+  [{ text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" }],
+  [{ text: "📊 خروجی Excel درخواست‌ها", callback_data: "admin:export_bookings" }],
+  [{ text: "📦 آمار سریع", callback_data: "admin:stats" }]
 ];
 
 export default {
   async fetch(request, env) {
     if (request.method === "GET") {
-      return new Response("Telegram multipurpose bot is running.");
+      return new Response("C Club Telegram bot is running.");
     }
 
-    const update = await request.json();
-
-    if (update.callback_query) {
-      await handleCallback(update.callback_query, env);
-      return new Response("OK");
+    let update;
+    try {
+      update = await request.json();
+    } catch {
+      return new Response("Bad request", { status: 400 });
     }
 
-    if (update.message) {
-      await handleMessage(update.message, env);
-      return new Response("OK");
+    try {
+      if (update.callback_query) await handleCallback(update.callback_query, env);
+      if (update.message) await handleMessage(update.message, env);
+    } catch (error) {
+      await notifyAdmin(env, `⚠️ Bot error\n\n${String(error?.stack || error)}`);
     }
 
     return new Response("OK");
@@ -124,78 +138,75 @@ export default {
 };
 
 async function handleMessage(message, env) {
-  const chatId = message.chat.id;
+  const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   const text = (message.text || "").trim();
-  const state = await getState(env, userId);
 
   if (text === "/start") {
     await clearState(env, userId);
-    await sendMessage(env, chatId, "سلام. یکی از بخش‌ها را انتخاب کن:", keyboard(MAIN_MENU));
+    await sendHome(env, chatId);
+    return;
+  }
+
+  if (text === "/admin") {
+    if (!isAdmin(env, userId)) {
+      await sendMessage(env, chatId, "⛔️ این بخش فقط برای ادمین فعال است.");
+      return;
+    }
+    await clearState(env, userId);
+    await sendAdminPanel(env, chatId);
     return;
   }
 
   if (text === "/cancel") {
-    await stopAnonymousChat(env, userId);
     await clearState(env, userId);
-    await sendMessage(env, chatId, "لغو شد. از منوی زیر انتخاب کن:", keyboard(MAIN_MENU));
+    await sendMessage(env, chatId, "✅ عملیات لغو شد.", keyboard(MAIN_MENU));
     return;
   }
 
-  if (text === "/stop") {
-    await stopAnonymousChat(env, userId);
-    await clearState(env, userId);
-    await sendMessage(env, chatId, "چت ناشناس متوقف شد.", keyboard(MAIN_MENU));
+  const state = await getState(env, userId);
+
+  if (state?.mode === "admin_add_slot") {
+    await finishAddSlot(env, message, text);
     return;
   }
 
   if (state?.mode === "test") {
-    await handleTestAnswer(env, message, state);
+    await sendMessage(env, chatId, "🎛 لطفاً جواب آزمون را فقط با دکمه‌های زیر همان سوال انتخاب کن.");
     return;
   }
 
   if (state?.mode === "booking_name") {
-    await setState(env, userId, { mode: "booking_phone", name: text });
-    await sendMessage(env, chatId, "شماره تماس یا آیدی تلگرام را بفرست:");
+    await handleBookingName(env, message, text);
     return;
   }
 
-  if (state?.mode === "booking_phone") {
-    await setState(env, userId, { ...state, mode: "booking_topic", contact: text });
-    await sendMessage(env, chatId, "موضوع مشاوره را کوتاه بنویس:");
+  if (state?.mode === "booking_contact") {
+    await handleBookingContact(env, message, state, text);
     return;
   }
 
   if (state?.mode === "booking_topic") {
-    await finishBooking(env, message, state, text);
+    await handleBookingTopic(env, message, state, text);
     return;
   }
 
   if (state?.mode === "submit_post") {
-    await finishPostSubmission(env, message, text);
+    await handlePostSubmission(env, message);
     return;
   }
 
-  const partnerId = await env.BOT_KV.get(`anon:partner:${userId}`);
-  if (partnerId) {
-    await forwardAnonymous(env, message, partnerId);
-    return;
-  }
-
-  await sendMessage(env, chatId, "دستور را متوجه نشدم. از منو انتخاب کن:", keyboard(MAIN_MENU));
+  await sendMessage(env, chatId, "از منوی زیر انتخاب کن:", keyboard(MAIN_MENU));
 }
 
 async function handleCallback(query, env) {
   const userId = String(query.from.id);
-  const chatId = query.message.chat.id;
-  const data = query.data;
-
+  const chatId = String(query.message.chat.id);
+  const data = query.data || "";
   await answerCallback(env, query.id);
 
-  if (data.startsWith("test:")) {
-    const state = await getState(env, userId);
-    const [, indexText, optionText] = data.split(":");
-    await handleTestCallback(query, env, state, Number(indexText), Number(optionText));
+  if (data === "menu:help") {
+    await sendHelp(env, chatId);
     return;
   }
 
@@ -205,19 +216,25 @@ async function handleCallback(query, env) {
   }
 
   if (data === "menu:booking") {
-    await setState(env, userId, { mode: "booking_name" });
-    await sendMessage(env, chatId, "برای نوبت مشاوره، نام یا اسم مستعار را بفرست. برای لغو /cancel");
-    return;
-  }
-
-  if (data === "menu:anonymous") {
-    await startAnonymous(env, chatId, userId);
+    await startBooking(env, chatId, userId);
     return;
   }
 
   if (data === "menu:submit") {
-    await setState(env, userId, { mode: "submit_post" });
-    await sendMessage(env, chatId, "متن پست/دیتا را بفرست تا برای ادمین ارسال شود. برای لغو /cancel");
+    await startPostSubmission(env, chatId, userId);
+    return;
+  }
+
+  if (data.startsWith("test:")) {
+    const state = await getState(env, userId);
+    const [, indexText, optionText] = data.split(":");
+    await handleTestCallback(query, env, state, Number(indexText), Number(optionText));
+    return;
+  }
+
+  if (data.startsWith("slot:pick:")) {
+    const state = await getState(env, userId);
+    await finishBookingWithSlot(env, query, state, data.replace("slot:pick:", ""));
     return;
   }
 
@@ -230,19 +247,72 @@ async function handleCallback(query, env) {
     await rejectPost(env, query, data.replace("post:reject:", ""));
     return;
   }
+
+  if (data.startsWith("slot:close:")) {
+    await closeSlot(env, query, data.replace("slot:close:", ""));
+    return;
+  }
+
+  if (data.startsWith("admin:")) {
+    if (!isAdmin(env, userId)) {
+      await sendMessage(env, chatId, "⛔️ دسترسی ادمین نداری.");
+      return;
+    }
+    await handleAdminCallback(env, query, data);
+  }
 }
 
-async function startTest(env, chatId, userId) {
-  await setState(env, userId, {
-    mode: "test",
-    index: 0,
-    scores: []
-  });
-
+async function sendHome(env, chatId) {
   await sendMessage(
     env,
     chatId,
-    "این آزمون صرفاً برای خودسنجی و پژوهش غیرتشخیصی است. فقط درباره روابط بالغ، آگاهانه و رضایتمندانه طراحی شده است.\n\nبرای لغو /cancel",
+    [
+      "🔴⚫️ C CLUB",
+      "",
+      "به ربات رسمی کلاب خوش آمدی.",
+      "از منوی زیر یکی از گزینه‌ها را انتخاب کن.",
+      "",
+      "⚠️ فقط برای کاربران ۱۸ سال به بالا."
+    ].join("\n"),
+    keyboard(MAIN_MENU)
+  );
+}
+
+async function sendHelp(env, chatId) {
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "ℹ️ راهنما",
+      "",
+      "🧪 آزمون پژوهشی: پاسخ‌ها را با دکمه‌ها انتخاب کن.",
+      "📅 نوبت مشاوره: نام، راه تماس و موضوع را وارد کن و از زمان‌های آزاد یکی را بردار.",
+      "📝 ارسال پست: متن یا عکس همراه کپشن بفرست تا ادمین تایید کند.",
+      "",
+      "لغو هر مسیر: /cancel"
+    ].join("\n"),
+    keyboard(MAIN_MENU)
+  );
+}
+
+async function startTest(env, chatId, userId) {
+  if (!(await checkCooldown(env, userId, "test", TEST_COOLDOWN_SECONDS))) {
+    await sendMessage(env, chatId, "⏳ چند لحظه صبر کن و دوباره آزمون را شروع کن.");
+    return;
+  }
+
+  await setState(env, userId, { mode: "test", index: 0, scores: [] });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🧪 آزمون پژوهشی",
+      "",
+      "این آزمون صرفاً خودسنجی و غیرتشخیصی است.",
+      "برای روابط بالغ، آگاهانه و رضایتمندانه طراحی شده.",
+      "",
+      "برای توقف: /cancel"
+    ].join("\n")
   );
   await sendQuestion(env, chatId, 0);
 }
@@ -250,243 +320,34 @@ async function startTest(env, chatId, userId) {
 async function sendQuestion(env, chatId, index) {
   const q = QUESTIONS[index];
   const rows = q.options.map((option, optionIndex) => [
-    { text: `${optionIndex + 1}. ${option.label}`, callback_data: `test:${index}:${optionIndex}` }
+    { text: `${optionIndex + 1}️⃣ ${option.label}`, callback_data: `test:${index}:${optionIndex}` }
   ]);
-  await sendMessage(env, chatId, `سوال ${index + 1} از ${QUESTION_COUNT}\n\n${q.text}`, keyboard(rows));
-}
 
-async function handleTestAnswer(env, message, state) {
-  await sendMessage(env, message.chat.id, "لطفاً پاسخ را با دکمه‌های زیر سوال انتخاب کن.");
-}
-
-async function finishTest(env, chatId, userId, state) {
-  const total = state.scores.reduce((sum, value) => sum + value, 0);
-  const max = QUESTION_COUNT * 3;
-  const percent = Math.round((total / max) * 100);
-
-  let band = "گرایش پایین یا نامشخص";
-  let note = "نتیجه نشان می‌دهد این فانتزی برایت محوریت زیادی ندارد یا هنوز روشن نیست.";
-
-  if (percent >= 35 && percent < 65) {
-    band = "گرایش متوسط";
-    note = "فانتزی یا کنجکاوی وجود دارد، اما بهتر است مرزها، رضایت و تفاوت فانتزی با اجرا جدی گرفته شود.";
-  }
-
-  if (percent >= 65) {
-    band = "گرایش بالا";
-    note = "این فانتزی برایت پررنگ‌تر است. هر تصمیم واقعی باید فقط با رضایت کامل، مرزبندی روشن، امنیت روانی و حق توقف انجام شود.";
-  }
-
-  await clearState(env, userId);
   await sendMessage(
     env,
     chatId,
-    `نتیجه آزمون:\n\nامتیاز: ${total} از ${max}\nدرصد: ${percent}%\nسطح: ${band}\n\n${note}\n\nاین نتیجه تشخیص روان‌شناختی نیست.`,
-    keyboard(MAIN_MENU)
+    [`🔘 سوال ${index + 1}/${QUESTION_COUNT}`, "", q.text].join("\n"),
+    keyboard(rows)
   );
-}
-
-async function startAnonymous(env, chatId, userId) {
-  const currentPartner = await env.BOT_KV.get(`anon:partner:${userId}`);
-  if (currentPartner) {
-    await sendMessage(env, chatId, "تو همین الان داخل چت ناشناس هستی. برای خروج /stop");
-    return;
-  }
-
-  const waitingUser = await env.BOT_KV.get("anon:waiting");
-  if (waitingUser && waitingUser !== userId) {
-    await env.BOT_KV.delete("anon:waiting");
-    await env.BOT_KV.put(`anon:partner:${userId}`, waitingUser);
-    await env.BOT_KV.put(`anon:partner:${waitingUser}`, userId);
-
-    await sendMessage(env, chatId, "وصل شدی. پیام‌ها ناشناس رد و بدل می‌شود. برای خروج /stop");
-    await sendMessage(env, waitingUser, "یک نفر وصل شد. پیام‌ها ناشناس رد و بدل می‌شود. برای خروج /stop");
-    return;
-  }
-
-  await env.BOT_KV.put("anon:waiting", userId);
-  await sendMessage(env, chatId, "در صف چت ناشناس هستی. وقتی نفر بعدی بیاید وصل می‌شوی. برای لغو /stop");
-}
-
-async function forwardAnonymous(env, message, partnerId) {
-  if (message.text) {
-    await sendMessage(env, partnerId, `پیام ناشناس:\n${message.text}`);
-    return;
-  }
-
-  await sendMessage(env, message.chat.id, "فعلاً در چت ناشناس فقط متن پشتیبانی می‌شود.");
-}
-
-async function stopAnonymousChat(env, userId) {
-  const partnerId = await env.BOT_KV.get(`anon:partner:${userId}`);
-  await env.BOT_KV.delete(`anon:partner:${userId}`);
-
-  const waitingUser = await env.BOT_KV.get("anon:waiting");
-  if (waitingUser === userId) {
-    await env.BOT_KV.delete("anon:waiting");
-  }
-
-  if (partnerId) {
-    await env.BOT_KV.delete(`anon:partner:${partnerId}`);
-    await sendMessage(env, partnerId, "طرف مقابل چت را ترک کرد.", keyboard(MAIN_MENU));
-  }
-}
-
-async function finishBooking(env, message, state, topic) {
-  const userId = String(message.from.id);
-  const chatId = message.chat.id;
-  const bookingId = crypto.randomUUID();
-  const booking = {
-    id: bookingId,
-    userId,
-    username: message.from.username || "",
-    name: state.name,
-    contact: state.contact,
-    topic,
-    createdAt: new Date().toISOString()
-  };
-
-  await env.BOT_KV.put(`booking:${bookingId}`, JSON.stringify(booking));
-  await clearState(env, userId);
-
-  await sendMessage(env, chatId, "درخواست نوبت ثبت شد. ادمین بررسی می‌کند و برای هماهنگی پیام می‌دهد.", keyboard(MAIN_MENU));
-  await notifyAdmin(env, `درخواست نوبت جدید:\n\nکد: ${bookingId}\nکاربر: ${formatUser(message.from)}\nنام: ${state.name}\nتماس: ${state.contact}\nموضوع: ${topic}`);
-}
-
-async function finishPostSubmission(env, message, content) {
-  const userId = String(message.from.id);
-  const chatId = message.chat.id;
-  const postId = crypto.randomUUID();
-  const post = {
-    id: postId,
-    userId,
-    username: message.from.username || "",
-    content,
-    status: "pending",
-    createdAt: new Date().toISOString()
-  };
-
-  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
-  await clearState(env, userId);
-
-  await sendMessage(env, chatId, "پستت برای تایید ادمین ارسال شد.", keyboard(MAIN_MENU));
-  await sendMessage(
-    env,
-    env.ADMIN_CHAT_ID,
-    `پست جدید برای تایید:\n\nکد: ${postId}\nکاربر: ${formatUser(message.from)}\n\n${content}`,
-    keyboard([
-      [
-        { text: "تایید", callback_data: `post:approve:${postId}` },
-        { text: "رد", callback_data: `post:reject:${postId}` }
-      ]
-    ])
-  );
-}
-
-async function approvePost(env, query, postId) {
-  const post = await getJson(env, `post:${postId}`);
-  if (!post) {
-    await sendMessage(env, query.message.chat.id, "پست پیدا نشد.");
-    return;
-  }
-
-  post.status = "approved";
-  post.approvedAt = new Date().toISOString();
-  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
-
-  if (env.CHANNEL_ID) {
-    await sendMessage(env, env.CHANNEL_ID, post.content);
-  }
-
-  await sendMessage(env, post.userId, "پستت تایید شد.");
-  await sendMessage(env, query.message.chat.id, `پست تایید شد.\nکد: ${postId}`);
-}
-
-async function rejectPost(env, query, postId) {
-  const post = await getJson(env, `post:${postId}`);
-  if (!post) {
-    await sendMessage(env, query.message.chat.id, "پست پیدا نشد.");
-    return;
-  }
-
-  post.status = "rejected";
-  post.rejectedAt = new Date().toISOString();
-  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
-
-  await sendMessage(env, post.userId, "پستت تایید نشد.");
-  await sendMessage(env, query.message.chat.id, `پست رد شد.\nکد: ${postId}`);
-}
-
-async function getState(env, userId) {
-  return getJson(env, `state:${userId}`);
-}
-
-async function setState(env, userId, value) {
-  await env.BOT_KV.put(`state:${userId}`, JSON.stringify(value), { expirationTtl: 60 * 60 * 24 });
-}
-
-async function clearState(env, userId) {
-  await env.BOT_KV.delete(`state:${userId}`);
-}
-
-async function getJson(env, key) {
-  const value = await env.BOT_KV.get(key);
-  return value ? JSON.parse(value) : null;
-}
-
-function keyboard(inline_keyboard) {
-  return { reply_markup: { inline_keyboard } };
-}
-
-function formatUser(user) {
-  const username = user.username ? `@${user.username}` : "بدون یوزرنیم";
-  return `${user.first_name || ""} ${user.last_name || ""} - ${username} - id:${user.id}`.trim();
-}
-
-async function notifyAdmin(env, text) {
-  if (env.ADMIN_CHAT_ID) {
-    await sendMessage(env, env.ADMIN_CHAT_ID, text);
-  }
-}
-
-async function sendMessage(env, chatId, text, extra = {}) {
-  await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      ...extra
-    })
-  });
-}
-
-async function answerCallback(env, callbackQueryId) {
-  await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/answerCallbackQuery`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ callback_query_id: callbackQueryId })
-  });
 }
 
 async function handleTestCallback(query, env, state, index, optionIndex) {
-  const chatId = query.message.chat.id;
+  const chatId = String(query.message.chat.id);
   const userId = String(query.from.id);
 
   if (!state || state.mode !== "test") {
-    await sendMessage(env, chatId, "برای شروع آزمون از منو گزینه آزمون را انتخاب کن.");
+    await sendMessage(env, chatId, "برای شروع آزمون از منو استفاده کن.", keyboard(MAIN_MENU));
     return;
   }
 
-  if (Number(state.index) !== Number(index)) {
-    await sendMessage(env, chatId, "این پاسخ مربوط به سوال فعلی نیست.");
+  if (state.index !== index || !QUESTIONS[index]?.options[optionIndex]) {
+    await sendMessage(env, chatId, "این پاسخ با سوال فعلی هماهنگ نیست.");
     return;
   }
 
-  const question = QUESTIONS[index];
-  const option = question.options[optionIndex];
+  const option = QUESTIONS[index].options[optionIndex];
   const nextState = {
-    ...state,
+    mode: "test",
     index: index + 1,
     scores: [...state.scores, option.score]
   };
@@ -498,4 +359,584 @@ async function handleTestCallback(query, env, state, index, optionIndex) {
 
   await setState(env, userId, nextState);
   await sendQuestion(env, chatId, nextState.index);
+}
+
+async function finishTest(env, chatId, userId, state) {
+  const total = state.scores.reduce((sum, value) => sum + value, 0);
+  const max = QUESTION_COUNT * 3;
+  const percent = Math.round((total / max) * 100);
+
+  let title = "🟢 گرایش پایین یا نامشخص";
+  let note = "این فانتزی برایت محوریت زیادی ندارد یا هنوز روشن نیست.";
+  if (percent >= 35 && percent < 65) {
+    title = "🟡 گرایش متوسط";
+    note = "کنجکاوی یا فانتزی وجود دارد؛ مرزها، رضایت و تفاوت فانتزی با اجرا باید جدی گرفته شود.";
+  }
+  if (percent >= 65) {
+    title = "🔴 گرایش بالا";
+    note = "این فانتزی پررنگ‌تر است؛ هر تصمیم واقعی فقط با رضایت کامل، مرزبندی روشن و حق توقف معنا دارد.";
+  }
+
+  await putListItem(env, "test_results", {
+    userId,
+    total,
+    percent,
+    createdAt: new Date().toISOString()
+  });
+  await clearState(env, userId);
+  await sendMessage(
+    env,
+    chatId,
+    [`📊 نتیجه آزمون`, "", `امتیاز: ${total}/${max}`, `درصد: ${percent}%`, `سطح: ${title}`, "", note, "", "این نتیجه تشخیص روان‌شناختی نیست."].join("\n"),
+    keyboard(MAIN_MENU)
+  );
+}
+
+async function startBooking(env, chatId, userId) {
+  if (!(await checkCooldown(env, userId, "booking", BOOKING_COOLDOWN_SECONDS))) {
+    await sendMessage(env, chatId, "⏳ درخواست نوبت خیلی سریع تکرار شده. کمی بعد دوباره امتحان کن.");
+    return;
+  }
+
+  const slots = await getOpenSlots(env);
+  if (!slots.length) {
+    await sendMessage(env, chatId, "📅 فعلاً زمان آزادی برای مشاوره ثبت نشده. بعداً دوباره چک کن.", keyboard(MAIN_MENU));
+    return;
+  }
+
+  await setState(env, userId, { mode: "booking_name" });
+  await sendMessage(env, chatId, "📅 نوبت مشاوره\n\nنام یا اسم مستعار را بفرست.\n\nمثال: Ali\nلغو: /cancel");
+}
+
+async function handleBookingName(env, message, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const error = validateName(text);
+  if (error) {
+    await sendMessage(env, chatId, `❌ ${error}\n\nدوباره نام یا اسم مستعار را بفرست:`);
+    return;
+  }
+  await setState(env, userId, { mode: "booking_contact", name: cleanText(text) });
+  await sendMessage(env, chatId, "📱 راه تماس را بفرست.\n\nقبول می‌کنم: شماره موبایل یا آیدی تلگرام مثل @username");
+}
+
+async function handleBookingContact(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const error = validateContact(text);
+  if (error) {
+    await sendMessage(env, chatId, `❌ ${error}\n\nشماره موبایل یا آیدی تلگرام معتبر بفرست:`);
+    return;
+  }
+  await setState(env, userId, { ...state, mode: "booking_topic", contact: cleanText(text) });
+  await sendMessage(env, chatId, "🧩 موضوع مشاوره را کوتاه بنویس.\n\nحداقل ۱۰ و حداکثر ۵۰۰ کاراکتر.");
+}
+
+async function handleBookingTopic(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const error = validateTopic(text);
+  if (error) {
+    await sendMessage(env, chatId, `❌ ${error}\n\nموضوع را دوباره بفرست:`);
+    return;
+  }
+
+  const slots = await getOpenSlots(env);
+  if (!slots.length) {
+    await clearState(env, userId);
+    await sendMessage(env, chatId, "متأسفانه همین الان زمان آزادی باقی نمانده.", keyboard(MAIN_MENU));
+    return;
+  }
+
+  await setState(env, userId, { ...state, mode: "booking_slot", topic: cleanText(text) });
+  await sendMessage(env, chatId, "🗓 یکی از زمان‌های آزاد را انتخاب کن:", keyboard(slots.slice(0, 12).map((slot) => [
+    { text: slot.label, callback_data: `slot:pick:${slot.id}` }
+  ])));
+}
+
+async function finishBookingWithSlot(env, query, state, slotId) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  if (!state || state.mode !== "booking_slot") {
+    await sendMessage(env, chatId, "برای رزرو، از منوی نوبت مشاوره شروع کن.");
+    return;
+  }
+
+  const slot = await getJson(env, `slot:${slotId}`);
+  if (!slot || slot.status !== "open") {
+    await sendMessage(env, chatId, "این زمان دیگر آزاد نیست. دوباره نوبت مشاوره را شروع کن.", keyboard(MAIN_MENU));
+    await clearState(env, userId);
+    return;
+  }
+
+  const bookingId = shortId();
+  const booking = {
+    id: bookingId,
+    userId,
+    username: query.from.username || "",
+    firstName: query.from.first_name || "",
+    name: state.name,
+    contact: state.contact,
+    topic: state.topic,
+    slotId,
+    slotLabel: slot.label,
+    status: "scheduled",
+    createdAt: new Date().toISOString()
+  };
+
+  slot.status = "booked";
+  slot.bookedBy = userId;
+  slot.bookingId = bookingId;
+  await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
+  await env.BOT_KV.put(`booking:${bookingId}`, JSON.stringify(booking));
+  await putListItem(env, "bookings", booking);
+  await clearState(env, userId);
+
+  await sendMessage(
+    env,
+    chatId,
+    [`✅ نوبتت ثبت شد`, "", `کد: ${bookingId}`, `زمان: ${slot.label}`, "", "لطفاً در همین زمان آماده باش."].join("\n"),
+    keyboard(MAIN_MENU)
+  );
+
+  await notifyAdmin(
+    env,
+    [
+      "📅 نوبت جدید ثبت شد",
+      "",
+      `کد: ${bookingId}`,
+      `زمان: ${slot.label}`,
+      `کاربر: ${formatUser(query.from)}`,
+      `نام: ${booking.name}`,
+      `تماس: ${booking.contact}`,
+      `موضوع: ${booking.topic}`
+    ].join("\n")
+  );
+}
+
+async function startPostSubmission(env, chatId, userId) {
+  if (!(await checkCooldown(env, userId, "post", POST_COOLDOWN_SECONDS))) {
+    await sendMessage(env, chatId, "⏳ برای جلوگیری از اسپم، بین ارسال پست‌ها کمی فاصله بگذار.");
+    return;
+  }
+
+  await setState(env, userId, { mode: "submit_post" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "📝 ارسال پست برای تایید",
+      "",
+      "یک متن بفرست، یا یک عکس همراه کپشن.",
+      "پست بعد از تایید ادمین در کانال ارسال می‌شود.",
+      "",
+      "حداکثر متن: ۲۸۰۰ کاراکتر",
+      "لغو: /cancel"
+    ].join("\n")
+  );
+}
+
+async function handlePostSubmission(env, message) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const post = normalizePost(message);
+
+  if (!post.ok) {
+    await sendMessage(env, chatId, `❌ ${post.error}\n\nدوباره متن یا عکس همراه کپشن بفرست.`);
+    return;
+  }
+
+  const contentHash = await sha256(`${userId}:${post.kind}:${post.text}:${post.fileId || ""}`);
+  const duplicate = await env.BOT_KV.get(`post_hash:${contentHash}`);
+  if (duplicate) {
+    await sendMessage(env, chatId, "❌ این پست تکراری است و دوباره ثبت نمی‌شود.", keyboard(MAIN_MENU));
+    await clearState(env, userId);
+    return;
+  }
+
+  const postId = shortId();
+  const finalText = addChannelFooter(post.text);
+  const record = {
+    id: postId,
+    userId,
+    username: message.from.username || "",
+    firstName: message.from.first_name || "",
+    kind: post.kind,
+    text: post.text,
+    finalText,
+    fileId: post.fileId || "",
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+
+  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(record));
+  await env.BOT_KV.put(`post_hash:${contentHash}`, postId, { expirationTtl: 60 * 60 * 24 * 14 });
+  await putListItem(env, "posts", record);
+  await clearState(env, userId);
+
+  await sendMessage(env, chatId, "✅ پست برای ادمین ارسال شد. نتیجه بعد از بررسی اعلام می‌شود.", keyboard(MAIN_MENU));
+  await sendAdminPostPreview(env, record, message.from);
+}
+
+async function sendAdminPostPreview(env, post, user) {
+  const adminText = [
+    "📝 پست جدید برای تایید",
+    "",
+    `کد: ${post.id}`,
+    `کاربر: ${formatUser(user)}`,
+    `نوع: ${post.kind === "photo" ? "عکس + کپشن" : "متن"}`,
+    "",
+    "پیش‌نمایش پست:"
+  ].join("\n");
+
+  await sendMessage(env, env.ADMIN_CHAT_ID, adminText);
+  const controls = keyboard([[
+    { text: "✅ تایید و ارسال", callback_data: `post:approve:${post.id}` },
+    { text: "❌ رد", callback_data: `post:reject:${post.id}` }
+  ]]);
+
+  if (post.kind === "photo") {
+    await sendPhoto(env, env.ADMIN_CHAT_ID, post.fileId, post.finalText, controls);
+    return;
+  }
+
+  await sendMessage(env, env.ADMIN_CHAT_ID, post.finalText, controls);
+}
+
+async function approvePost(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending") {
+    await sendMessage(env, chatId, "این پست پیدا نشد یا قبلاً بررسی شده.");
+    return;
+  }
+
+  post.status = "approved";
+  post.approvedAt = new Date().toISOString();
+  post.approvedBy = String(query.from.id);
+  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
+
+  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
+  if (post.kind === "photo") {
+    await sendPhoto(env, targetChannel, post.fileId, post.finalText);
+  } else {
+    await sendMessage(env, targetChannel, post.finalText);
+  }
+
+  await sendMessage(env, post.userId, "✅ پستت تایید و در کانال ارسال شد.");
+  await sendMessage(env, chatId, `✅ پست تایید و ارسال شد.\nکد: ${postId}`);
+}
+
+async function rejectPost(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending") {
+    await sendMessage(env, chatId, "این پست پیدا نشد یا قبلاً بررسی شده.");
+    return;
+  }
+
+  post.status = "rejected";
+  post.rejectedAt = new Date().toISOString();
+  post.rejectedBy = String(query.from.id);
+  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
+
+  await sendMessage(env, post.userId, "❌ پستت تایید نشد.");
+  await sendMessage(env, chatId, `❌ پست رد شد.\nکد: ${postId}`);
+}
+
+async function handleAdminCallback(env, query, data) {
+  const chatId = String(query.message.chat.id);
+
+  if (data === "admin:add_slot") {
+    await setState(env, String(query.from.id), { mode: "admin_add_slot" });
+    await sendMessage(
+      env,
+      chatId,
+      "➕ زمان مشاوره را دقیق وارد کن.\n\nمثال:\nسه‌شنبه ۲۰:۳۰\nیا\n2026-07-22 20:30\n\nلغو: /cancel"
+    );
+    return;
+  }
+
+  if (data === "admin:list_slots") {
+    const slots = await getOpenSlots(env, 20);
+    if (!slots.length) {
+      await sendMessage(env, chatId, "هیچ زمان فعالی ثبت نشده.", keyboard(ADMIN_MENU));
+      return;
+    }
+    await sendMessage(env, chatId, "🗓 زمان‌های فعال:", keyboard(slots.map((slot) => [
+      { text: `❌ بستن ${slot.label}`, callback_data: `slot:close:${slot.id}` }
+    ])));
+    return;
+  }
+
+  if (data === "admin:export_bookings") {
+    await exportBookings(env, chatId);
+    return;
+  }
+
+  if (data === "admin:stats") {
+    const bookings = await getList(env, "bookings");
+    const posts = await getList(env, "posts");
+    const tests = await getList(env, "test_results");
+    await sendMessage(
+      env,
+      chatId,
+      [`📦 آمار سریع`, "", `نوبت‌ها: ${bookings.length}`, `پست‌ها: ${posts.length}`, `نتایج آزمون: ${tests.length}`].join("\n"),
+      keyboard(ADMIN_MENU)
+    );
+  }
+}
+
+async function finishAddSlot(env, message, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const slotLabel = cleanText(text);
+  if (slotLabel.length < 4 || slotLabel.length > 80) {
+    await sendMessage(env, chatId, "❌ زمان باید بین ۴ تا ۸۰ کاراکتر باشد. دوباره بفرست:");
+    return;
+  }
+
+  const slot = {
+    id: shortId(),
+    label: slotLabel,
+    status: "open",
+    createdAt: new Date().toISOString(),
+    createdBy: userId
+  };
+  await env.BOT_KV.put(`slot:${slot.id}`, JSON.stringify(slot));
+  await putListItem(env, "slots", slot);
+  await clearState(env, userId);
+  await sendMessage(env, chatId, `✅ زمان اضافه شد:\n${slot.label}`, keyboard(ADMIN_MENU));
+}
+
+async function closeSlot(env, query, slotId) {
+  const chatId = String(query.message.chat.id);
+  if (!isAdmin(env, String(query.from.id))) return;
+
+  const slot = await getJson(env, `slot:${slotId}`);
+  if (!slot) {
+    await sendMessage(env, chatId, "زمان پیدا نشد.");
+    return;
+  }
+  slot.status = "closed";
+  slot.closedAt = new Date().toISOString();
+  await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
+  await sendMessage(env, chatId, `✅ زمان بسته شد:\n${slot.label}`, keyboard(ADMIN_MENU));
+}
+
+async function sendAdminPanel(env, chatId) {
+  await sendMessage(env, chatId, "🛠 پنل ادمین\n\nچه کاری می‌خواهی انجام بدهی؟", keyboard(ADMIN_MENU));
+}
+
+async function exportBookings(env, chatId) {
+  const bookings = await getList(env, "bookings");
+  if (!bookings.length) {
+    await sendMessage(env, chatId, "هنوز هیچ درخواست نوبتی ثبت نشده.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const rows = [
+    ["id", "status", "slot", "name", "contact", "topic", "telegram_id", "username", "created_at"],
+    ...bookings.map((item) => [
+      item.id,
+      item.status,
+      item.slotLabel,
+      item.name,
+      item.contact,
+      item.topic,
+      item.userId,
+      item.username ? `@${item.username}` : "",
+      item.createdAt
+    ])
+  ];
+  const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  const filename = `bookings-${new Date().toISOString().slice(0, 10)}.csv`;
+  await sendDocument(env, chatId, csv, filename, "📊 فایل خروجی درخواست‌های مشاوره؛ در Excel باز می‌شود.");
+}
+
+function normalizePost(message) {
+  if (message.photo?.length) {
+    const largestPhoto = message.photo[message.photo.length - 1];
+    const caption = cleanText(message.caption || "");
+    if (!caption || caption.length < 5) {
+      return { ok: false, error: "برای عکس باید کپشن معنادار حداقل ۵ کاراکتری بنویسی." };
+    }
+    if (caption.length > MAX_PHOTO_CAPTION_LENGTH) {
+      return { ok: false, error: `کپشن عکس باید حداکثر ${MAX_PHOTO_CAPTION_LENGTH} کاراکتر باشد.` };
+    }
+    return { ok: true, kind: "photo", fileId: largestPhoto.file_id, text: caption };
+  }
+
+  if (message.text) {
+    const text = cleanText(message.text);
+    if (text.startsWith("/")) return { ok: false, error: "برای ارسال پست، دستور نفرست؛ متن پست را بفرست." };
+    if (text.length < 5) return { ok: false, error: "متن پست خیلی کوتاه است. حداقل ۵ کاراکتر لازم است." };
+    if (text.length > MAX_TEXT_LENGTH) return { ok: false, error: `متن بیشتر از ${MAX_TEXT_LENGTH} کاراکتر است.` };
+    return { ok: true, kind: "text", text };
+  }
+
+  return { ok: false, error: "فعلاً فقط متن یا عکس همراه کپشن پشتیبانی می‌شود." };
+}
+
+function addChannelFooter(text) {
+  const trimmed = cleanText(text);
+  if (trimmed.includes(CHANNEL_USERNAME)) return trimmed;
+  return `${trimmed}\n\n${CHANNEL_USERNAME}`;
+}
+
+function validateName(value) {
+  const text = cleanText(value);
+  if (text.length < 2) return "نام خیلی کوتاه است.";
+  if (text.length > 60) return "نام خیلی طولانی است.";
+  if (/https?:\/\/|t\.me|telegram\.me/i.test(text)) return "داخل نام لینک نفرست.";
+  return "";
+}
+
+function validateContact(value) {
+  const text = cleanText(value);
+  const phone = /^\+?\d[\d\s-]{7,18}$/.test(text);
+  const username = /^@[A-Za-z0-9_]{5,32}$/.test(text);
+  if (!phone && !username) return "راه تماس باید شماره موبایل یا آیدی تلگرام مثل @username باشد.";
+  return "";
+}
+
+function validateTopic(value) {
+  const text = cleanText(value);
+  if (text.length < 10) return "موضوع خیلی کوتاه است.";
+  if (text.length > 500) return "موضوع خیلی طولانی است.";
+  if (countUrls(text) > 0) return "در موضوع مشاوره لینک نفرست.";
+  return "";
+}
+
+async function checkCooldown(env, userId, action, seconds) {
+  const key = `cooldown:${action}:${userId}`;
+  const exists = await env.BOT_KV.get(key);
+  if (exists) return false;
+  await env.BOT_KV.put(key, "1", { expirationTtl: seconds });
+  return true;
+}
+
+async function getOpenSlots(env, limit = 12) {
+  const slots = await getList(env, "slots");
+  return slots
+    .filter((slot) => slot.status === "open")
+    .slice(-limit)
+    .reverse();
+}
+
+async function putListItem(env, listName, item) {
+  const list = await getList(env, listName);
+  list.push(item);
+  const trimmed = list.slice(-500);
+  await env.BOT_KV.put(`list:${listName}`, JSON.stringify(trimmed));
+}
+
+async function getList(env, listName) {
+  return (await getJson(env, `list:${listName}`)) || [];
+}
+
+async function getState(env, userId) {
+  return getJson(env, `state:${userId}`);
+}
+
+async function setState(env, userId, value) {
+  await env.BOT_KV.put(`state:${userId}`, JSON.stringify(value), { expirationTtl: 60 * 45 });
+}
+
+async function clearState(env, userId) {
+  await env.BOT_KV.delete(`state:${userId}`);
+}
+
+async function getJson(env, key) {
+  const value = await env.BOT_KV.get(key);
+  return value ? JSON.parse(value) : null;
+}
+
+function isAdmin(env, userId) {
+  return String(env.ADMIN_CHAT_ID) === String(userId);
+}
+
+function keyboard(inline_keyboard) {
+  return { reply_markup: { inline_keyboard } };
+}
+
+function formatUser(user) {
+  const username = user.username ? `@${user.username}` : "بدون یوزرنیم";
+  return `${user.first_name || ""} ${user.last_name || ""} - ${username} - id:${user.id}`.trim();
+}
+
+function cleanText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function countUrls(value) {
+  return (String(value).match(/https?:\/\/|t\.me\/|telegram\.me\//gi) || []).length;
+}
+
+function shortId() {
+  return crypto.randomUUID().split("-")[0];
+}
+
+function csvCell(value) {
+  return `"${String(value || "").replace(/"/g, '""')}"`;
+}
+
+async function sha256(text) {
+  const data = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function notifyAdmin(env, text) {
+  if (env.ADMIN_CHAT_ID) await sendMessage(env, env.ADMIN_CHAT_ID, text);
+}
+
+async function telegram(env, method, payload) {
+  const response = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!result.ok) throw new Error(`${method} failed: ${JSON.stringify(result)}`);
+  return result;
+}
+
+async function sendMessage(env, chatId, text, extra = {}) {
+  return telegram(env, "sendMessage", {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true,
+    ...extra
+  });
+}
+
+async function sendPhoto(env, chatId, photo, caption, extra = {}) {
+  return telegram(env, "sendPhoto", {
+    chat_id: chatId,
+    photo,
+    caption,
+    ...extra
+  });
+}
+
+async function answerCallback(env, callbackQueryId) {
+  return telegram(env, "answerCallbackQuery", { callback_query_id: callbackQueryId });
+}
+
+async function sendDocument(env, chatId, content, filename, caption) {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("caption", caption);
+  form.append("document", new Blob([content], { type: "text/csv;charset=utf-8" }), filename);
+
+  const response = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendDocument`, {
+    method: "POST",
+    body: form
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!result.ok) throw new Error(`sendDocument failed: ${JSON.stringify(result)}`);
+  return result;
 }
