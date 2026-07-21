@@ -1,10 +1,13 @@
 const CHANNEL_USERNAME = "@cucksclub";
+const INSTAGRAM_URL = "https://instagram.com/cucksclub";
 const QUESTION_COUNT = 10;
 const MAX_TEXT_LENGTH = 2800;
 const MAX_PHOTO_CAPTION_LENGTH = 900;
+const MAX_VIDEO_CAPTION_LENGTH = 900;
 const POST_COOLDOWN_SECONDS = 90;
 const BOOKING_COOLDOWN_SECONDS = 60;
 const TEST_COOLDOWN_SECONDS = 20;
+const REMINDER_WINDOW_MINUTES = 30;
 
 const QUESTIONS = [
   {
@@ -106,6 +109,12 @@ const MAIN_MENU = [
   [{ text: "ℹ️ راهنما", callback_data: "menu:help" }]
 ];
 
+const POST_TYPE_MENU = [
+  [{ text: "🖼 ارسال عکس یا فیلم در کانال", callback_data: "post:type:media" }],
+  [{ text: "✍️ ارسال اعترافات در کانال", callback_data: "post:type:confession" }],
+  [{ text: "↩️ برگشت", callback_data: "menu:help" }]
+];
+
 const ADMIN_MENU = [
   [{ text: "➕ افزودن زمان مشاوره", callback_data: "admin:add_slot" }],
   [{ text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" }],
@@ -134,6 +143,10 @@ export default {
     }
 
     return new Response("OK");
+  },
+
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(sendDueBookingReminders(env));
   }
 };
 
@@ -181,8 +194,8 @@ async function handleMessage(message, env) {
     return;
   }
 
-  if (state?.mode === "booking_contact") {
-    await handleBookingContact(env, message, state, text);
+  if (state?.mode === "booking_phone") {
+    await handleBookingPhone(env, message, state, text);
     return;
   }
 
@@ -191,8 +204,18 @@ async function handleMessage(message, env) {
     return;
   }
 
-  if (state?.mode === "submit_post") {
-    await handlePostSubmission(env, message);
+  if (state?.mode === "post_media_wait_media") {
+    await handleMediaPostFile(env, message);
+    return;
+  }
+
+  if (state?.mode === "post_media_wait_caption") {
+    await handleMediaPostCaption(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "post_confession_text") {
+    await handleConfessionPost(env, message, text);
     return;
   }
 
@@ -222,6 +245,16 @@ async function handleCallback(query, env) {
 
   if (data === "menu:submit") {
     await startPostSubmission(env, chatId, userId);
+    return;
+  }
+
+  if (data === "post:type:media") {
+    await startMediaPost(env, chatId, userId);
+    return;
+  }
+
+  if (data === "post:type:confession") {
+    await startConfessionPost(env, chatId, userId);
     return;
   }
 
@@ -286,8 +319,9 @@ async function sendHelp(env, chatId) {
       "ℹ️ راهنما",
       "",
       "🧪 آزمون پژوهشی: پاسخ‌ها را با دکمه‌ها انتخاب کن.",
-      "📅 نوبت مشاوره: نام، راه تماس و موضوع را وارد کن و از زمان‌های آزاد یکی را بردار.",
-      "📝 ارسال پست: متن یا عکس همراه کپشن بفرست تا ادمین تایید کند.",
+      "📅 نوبت مشاوره: فقط زمان‌های آزاد نمایش داده می‌شود.",
+      "🖼 عکس/فیلم کانال: اول فایل، بعد کپشن.",
+      "✍️ اعترافات: متن حداقل ۱۰ کلمه‌ای.",
       "",
       "لغو هر مسیر: /cancel"
     ].join("\n"),
@@ -416,16 +450,23 @@ async function handleBookingName(env, message, text) {
     await sendMessage(env, chatId, `❌ ${error}\n\nدوباره نام یا اسم مستعار را بفرست:`);
     return;
   }
-  await setState(env, userId, { mode: "booking_contact", name: cleanText(text) });
-  await sendMessage(env, chatId, "📱 راه تماس را بفرست.\n\nقبول می‌کنم: شماره موبایل یا آیدی تلگرام مثل @username");
+  const username = message.from.username ? `@${message.from.username}` : "";
+  if (username) {
+    await setState(env, userId, { mode: "booking_topic", name: cleanText(text), contact: username });
+    await sendMessage(env, chatId, `✅ آیدی تلگرامت خودکار دریافت شد: ${username}\n\n🧩 موضوع مشاوره را کوتاه بنویس.\n\nحداقل ۱۰ و حداکثر ۵۰۰ کاراکتر.`);
+    return;
+  }
+
+  await setState(env, userId, { mode: "booking_phone", name: cleanText(text) });
+  await sendMessage(env, chatId, "📱 چون آیدی تلگرام قابل دریافت نیست، شماره تماس را بفرست.\n\nمثال: 09121234567");
 }
 
-async function handleBookingContact(env, message, state, text) {
+async function handleBookingPhone(env, message, state, text) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
-  const error = validateContact(text);
+  const error = validatePhone(text);
   if (error) {
-    await sendMessage(env, chatId, `❌ ${error}\n\nشماره موبایل یا آیدی تلگرام معتبر بفرست:`);
+    await sendMessage(env, chatId, `❌ ${error}\n\nشماره تماس معتبر بفرست:`);
     return;
   }
   await setState(env, userId, { ...state, mode: "booking_topic", contact: cleanText(text) });
@@ -480,6 +521,8 @@ async function finishBookingWithSlot(env, query, state, slotId) {
     topic: state.topic,
     slotId,
     slotLabel: slot.label,
+    startsAt: slot.startsAt || "",
+    reminderSent: false,
     status: "scheduled",
     createdAt: new Date().toISOString()
   };
@@ -488,6 +531,7 @@ async function finishBookingWithSlot(env, query, state, slotId) {
   slot.bookedBy = userId;
   slot.bookingId = bookingId;
   await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
+  await updateListItem(env, "slots", slotId, (item) => ({ ...item, status: "booked", bookedBy: userId, bookingId }));
   await env.BOT_KV.put(`booking:${bookingId}`, JSON.stringify(booking));
   await putListItem(env, "bookings", booking);
   await clearState(env, userId);
@@ -520,33 +564,123 @@ async function startPostSubmission(env, chatId, userId) {
     return;
   }
 
-  await setState(env, userId, { mode: "submit_post" });
   await sendMessage(
     env,
     chatId,
     [
       "📝 ارسال پست برای تایید",
       "",
-      "یک متن بفرست، یا یک عکس همراه کپشن.",
-      "پست بعد از تایید ادمین در کانال ارسال می‌شود.",
+      "نوع پست را انتخاب کن:",
       "",
-      "حداکثر متن: ۲۸۰۰ کاراکتر",
+      "🖼 عکس/فیلم: اول فایل، بعد کپشن",
+      "✍️ اعترافات: فقط متن، حداقل ۱۰ کلمه"
+    ].join("\n"),
+    keyboard(POST_TYPE_MENU)
+  );
+}
+
+async function startMediaPost(env, chatId, userId) {
+  await setState(env, userId, { mode: "post_media_wait_media" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🖼 ارسال عکس یا فیلم",
+      "",
+      "اول خود عکس یا فیلم را بفرست.",
+      "بعد از دریافت فایل، کپشن را جداگانه می‌پرسم.",
+      "",
       "لغو: /cancel"
     ].join("\n")
   );
 }
 
-async function handlePostSubmission(env, message) {
+async function startConfessionPost(env, chatId, userId) {
+  await setState(env, userId, { mode: "post_confession_text" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "✍️ ارسال اعترافات",
+      "",
+      "متن اعتراف را بفرست.",
+      "حداقل متن: ۱۰ کلمه",
+      "",
+      "لغو: /cancel"
+    ].join("\n")
+  );
+}
+
+async function handleMediaPostFile(env, message) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
-  const post = normalizePost(message);
+  const media = normalizeMediaFile(message);
 
-  if (!post.ok) {
-    await sendMessage(env, chatId, `❌ ${post.error}\n\nدوباره متن یا عکس همراه کپشن بفرست.`);
+  if (!media.ok) {
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس یا فیلم بفرست.`);
     return;
   }
 
-  const contentHash = await sha256(`${userId}:${post.kind}:${post.text}:${post.fileId || ""}`);
+  await setState(env, userId, { mode: "post_media_wait_caption", media });
+  await sendMessage(env, chatId, "✅ فایل دریافت شد.\n\nحالا کپشن پست را بفرست.");
+}
+
+async function handleMediaPostCaption(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const caption = cleanText(text);
+  const limit = state.media.kind === "video" ? MAX_VIDEO_CAPTION_LENGTH : MAX_PHOTO_CAPTION_LENGTH;
+
+  if (!caption || caption.length < 5) {
+    await sendMessage(env, chatId, "❌ کپشن خیلی کوتاه است. حداقل ۵ کاراکتر بفرست:");
+    return;
+  }
+  if (caption.length > limit) {
+    await sendMessage(env, chatId, `❌ کپشن باید حداکثر ${limit} کاراکتر باشد. کوتاه‌ترش کن:`);
+    return;
+  }
+
+  const post = {
+    kind: state.media.kind,
+    fileId: state.media.fileId,
+    rawText: caption,
+    finalText: buildMediaCaption(caption)
+  };
+
+  await savePostAndPreview(env, message, post);
+}
+
+async function handleConfessionPost(env, message, text) {
+  const chatId = String(message.chat.id);
+  const confession = cleanText(text);
+
+  if (!message.text || confession.startsWith("/")) {
+    await sendMessage(env, chatId, "❌ برای اعترافات فقط متن معمولی بفرست.");
+    return;
+  }
+
+  if (wordCount(confession) < 10) {
+    await sendMessage(env, chatId, "❌ متن اعتراف باید حداقل ۱۰ کلمه باشد. کامل‌تر بنویس:");
+    return;
+  }
+
+  if (confession.length > MAX_TEXT_LENGTH) {
+    await sendMessage(env, chatId, `❌ متن بیشتر از ${MAX_TEXT_LENGTH} کاراکتر است. کوتاه‌ترش کن:`);
+    return;
+  }
+
+  await savePostAndPreview(env, message, {
+    kind: "confession",
+    fileId: "",
+    rawText: confession,
+    finalText: buildConfessionText(confession)
+  });
+}
+
+async function savePostAndPreview(env, message, post) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const contentHash = await sha256(`${userId}:${post.kind}:${post.rawText}:${post.fileId || ""}`);
   const duplicate = await env.BOT_KV.get(`post_hash:${contentHash}`);
   if (duplicate) {
     await sendMessage(env, chatId, "❌ این پست تکراری است و دوباره ثبت نمی‌شود.", keyboard(MAIN_MENU));
@@ -555,15 +689,14 @@ async function handlePostSubmission(env, message) {
   }
 
   const postId = shortId();
-  const finalText = addChannelFooter(post.text);
   const record = {
     id: postId,
     userId,
     username: message.from.username || "",
     firstName: message.from.first_name || "",
     kind: post.kind,
-    text: post.text,
-    finalText,
+    text: post.rawText,
+    finalText: post.finalText,
     fileId: post.fileId || "",
     status: "pending",
     createdAt: new Date().toISOString()
@@ -584,7 +717,7 @@ async function sendAdminPostPreview(env, post, user) {
     "",
     `کد: ${post.id}`,
     `کاربر: ${formatUser(user)}`,
-    `نوع: ${post.kind === "photo" ? "عکس + کپشن" : "متن"}`,
+    `نوع: ${postTypeLabel(post.kind)}`,
     "",
     "پیش‌نمایش پست:"
   ].join("\n");
@@ -596,11 +729,16 @@ async function sendAdminPostPreview(env, post, user) {
   ]]);
 
   if (post.kind === "photo") {
-    await sendPhoto(env, env.ADMIN_CHAT_ID, post.fileId, post.finalText, controls);
+    await sendPhoto(env, env.ADMIN_CHAT_ID, post.fileId, post.finalText, withInstagramButton(controls));
     return;
   }
 
-  await sendMessage(env, env.ADMIN_CHAT_ID, post.finalText, controls);
+  if (post.kind === "video") {
+    await sendVideo(env, env.ADMIN_CHAT_ID, post.fileId, post.finalText, withInstagramButton(controls));
+    return;
+  }
+
+  await sendMessage(env, env.ADMIN_CHAT_ID, post.finalText, withInstagramButton(controls));
 }
 
 async function approvePost(env, query, postId) {
@@ -611,17 +749,35 @@ async function approvePost(env, query, postId) {
     return;
   }
 
+  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
+  try {
+    if (post.kind === "photo") {
+      await sendPhoto(env, targetChannel, post.fileId, post.finalText, instagramKeyboard());
+    } else if (post.kind === "video") {
+      await sendVideo(env, targetChannel, post.fileId, post.finalText, instagramKeyboard());
+    } else {
+      await sendMessage(env, targetChannel, post.finalText, instagramKeyboard());
+    }
+  } catch (error) {
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "❌ ارسال به کانال انجام نشد.",
+        "",
+        `کانال هدف: ${targetChannel}`,
+        "ربات باید داخل کانال ادمین باشد و اجازه Post Messages داشته باشد.",
+        "",
+        String(error?.message || error)
+      ].join("\n")
+    );
+    return;
+  }
+
   post.status = "approved";
   post.approvedAt = new Date().toISOString();
   post.approvedBy = String(query.from.id);
   await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
-
-  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
-  if (post.kind === "photo") {
-    await sendPhoto(env, targetChannel, post.fileId, post.finalText);
-  } else {
-    await sendMessage(env, targetChannel, post.finalText);
-  }
 
   await sendMessage(env, post.userId, "✅ پستت تایید و در کانال ارسال شد.");
   await sendMessage(env, chatId, `✅ پست تایید و ارسال شد.\nکد: ${postId}`);
@@ -652,7 +808,7 @@ async function handleAdminCallback(env, query, data) {
     await sendMessage(
       env,
       chatId,
-      "➕ زمان مشاوره را دقیق وارد کن.\n\nمثال:\nسه‌شنبه ۲۰:۳۰\nیا\n2026-07-22 20:30\n\nلغو: /cancel"
+      "➕ زمان مشاوره را دقیق وارد کن.\n\nفرمت پیشنهادی:\n2026-07-22 20:30\n\nساعت بر اساس تهران ذخیره می‌شود.\nلغو: /cancel"
     );
     return;
   }
@@ -693,14 +849,16 @@ async function finishAddSlot(env, message, text) {
   if (!isAdmin(env, userId)) return;
 
   const slotLabel = cleanText(text);
-  if (slotLabel.length < 4 || slotLabel.length > 80) {
-    await sendMessage(env, chatId, "❌ زمان باید بین ۴ تا ۸۰ کاراکتر باشد. دوباره بفرست:");
+  const startsAt = parseTehranDateTime(slotLabel);
+  if (!startsAt) {
+    await sendMessage(env, chatId, "❌ زمان را با فرمت دقیق بفرست:\n\n2026-07-22 20:30");
     return;
   }
 
   const slot = {
     id: shortId(),
-    label: slotLabel,
+    label: formatTehranSlot(startsAt),
+    startsAt,
     status: "open",
     createdAt: new Date().toISOString(),
     createdBy: userId
@@ -723,6 +881,7 @@ async function closeSlot(env, query, slotId) {
   slot.status = "closed";
   slot.closedAt = new Date().toISOString();
   await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
+  await updateListItem(env, "slots", slotId, (item) => ({ ...item, status: "closed", closedAt: slot.closedAt }));
   await sendMessage(env, chatId, `✅ زمان بسته شد:\n${slot.label}`, keyboard(ADMIN_MENU));
 }
 
@@ -756,34 +915,32 @@ async function exportBookings(env, chatId) {
   await sendDocument(env, chatId, csv, filename, "📊 فایل خروجی درخواست‌های مشاوره؛ در Excel باز می‌شود.");
 }
 
-function normalizePost(message) {
+function normalizeMediaFile(message) {
   if (message.photo?.length) {
     const largestPhoto = message.photo[message.photo.length - 1];
-    const caption = cleanText(message.caption || "");
-    if (!caption || caption.length < 5) {
-      return { ok: false, error: "برای عکس باید کپشن معنادار حداقل ۵ کاراکتری بنویسی." };
-    }
-    if (caption.length > MAX_PHOTO_CAPTION_LENGTH) {
-      return { ok: false, error: `کپشن عکس باید حداکثر ${MAX_PHOTO_CAPTION_LENGTH} کاراکتر باشد.` };
-    }
-    return { ok: true, kind: "photo", fileId: largestPhoto.file_id, text: caption };
+    return { ok: true, kind: "photo", fileId: largestPhoto.file_id };
   }
 
-  if (message.text) {
-    const text = cleanText(message.text);
-    if (text.startsWith("/")) return { ok: false, error: "برای ارسال پست، دستور نفرست؛ متن پست را بفرست." };
-    if (text.length < 5) return { ok: false, error: "متن پست خیلی کوتاه است. حداقل ۵ کاراکتر لازم است." };
-    if (text.length > MAX_TEXT_LENGTH) return { ok: false, error: `متن بیشتر از ${MAX_TEXT_LENGTH} کاراکتر است.` };
-    return { ok: true, kind: "text", text };
+  if (message.video?.file_id) {
+    return { ok: true, kind: "video", fileId: message.video.file_id };
   }
 
-  return { ok: false, error: "فعلاً فقط متن یا عکس همراه کپشن پشتیبانی می‌شود." };
+  return { ok: false, error: "نوع فایل درست نیست." };
 }
 
-function addChannelFooter(text) {
-  const trimmed = cleanText(text);
-  if (trimmed.includes(CHANNEL_USERNAME)) return trimmed;
-  return `${trimmed}\n\n${CHANNEL_USERNAME}`;
+function buildMediaCaption(caption) {
+  return ["C CLUB", "", "#عکس_ارسالی", cleanText(caption), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`].join("\n");
+}
+
+function buildConfessionText(text) {
+  return ["#اعترافات_شما", cleanText(text), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`].join("\n");
+}
+
+function postTypeLabel(kind) {
+  if (kind === "photo") return "عکس";
+  if (kind === "video") return "فیلم";
+  if (kind === "confession") return "اعترافات";
+  return kind;
 }
 
 function validateName(value) {
@@ -794,11 +951,10 @@ function validateName(value) {
   return "";
 }
 
-function validateContact(value) {
+function validatePhone(value) {
   const text = cleanText(value);
   const phone = /^\+?\d[\d\s-]{7,18}$/.test(text);
-  const username = /^@[A-Za-z0-9_]{5,32}$/.test(text);
-  if (!phone && !username) return "راه تماس باید شماره موبایل یا آیدی تلگرام مثل @username باشد.";
+  if (!phone) return "شماره تماس معتبر نیست.";
   return "";
 }
 
@@ -819,11 +975,18 @@ async function checkCooldown(env, userId, action, seconds) {
 }
 
 async function getOpenSlots(env, limit = 12) {
-  const slots = await getList(env, "slots");
+  const slotRefs = await getList(env, "slots");
+  const slots = [];
+  for (const slotRef of slotRefs) {
+    const latest = await getJson(env, `slot:${slotRef.id}`);
+    if (latest) slots.push(latest);
+  }
+  const now = Date.now();
   return slots
     .filter((slot) => slot.status === "open")
-    .slice(-limit)
-    .reverse();
+    .filter((slot) => !slot.startsAt || Date.parse(slot.startsAt) > now)
+    .sort((a, b) => Date.parse(a.startsAt || "9999-12-31") - Date.parse(b.startsAt || "9999-12-31"))
+    .slice(0, limit);
 }
 
 async function putListItem(env, listName, item) {
@@ -831,6 +994,12 @@ async function putListItem(env, listName, item) {
   list.push(item);
   const trimmed = list.slice(-500);
   await env.BOT_KV.put(`list:${listName}`, JSON.stringify(trimmed));
+}
+
+async function updateListItem(env, listName, itemId, updater) {
+  const list = await getList(env, listName);
+  const updated = list.map((item) => item.id === itemId ? updater(item) : item);
+  await env.BOT_KV.put(`list:${listName}`, JSON.stringify(updated));
 }
 
 async function getList(env, listName) {
@@ -862,6 +1031,15 @@ function keyboard(inline_keyboard) {
   return { reply_markup: { inline_keyboard } };
 }
 
+function instagramKeyboard() {
+  return keyboard([[{ text: "Instagram", url: INSTAGRAM_URL }]]);
+}
+
+function withInstagramButton(extra = {}) {
+  const rows = extra.reply_markup?.inline_keyboard || [];
+  return keyboard([...rows, [{ text: "Instagram", url: INSTAGRAM_URL }]]);
+}
+
 function formatUser(user) {
   const username = user.username ? `@${user.username}` : "بدون یوزرنیم";
   return `${user.first_name || ""} ${user.last_name || ""} - ${username} - id:${user.id}`.trim();
@@ -871,8 +1049,81 @@ function cleanText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+function wordCount(value) {
+  return cleanText(value).split(/\s+/).filter(Boolean).length;
+}
+
 function countUrls(value) {
   return (String(value).match(/https?:\/\/|t\.me\/|telegram\.me\//gi) || []).length;
+}
+
+function parseTehranDateTime(value) {
+  const match = cleanText(value).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+  if (!match) return "";
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return "";
+
+  const utcMs = Date.UTC(year, month - 1, day, hour - 3, minute - 30, 0);
+  const startsAt = new Date(utcMs).toISOString();
+  if (Date.parse(startsAt) <= Date.now()) return "";
+  return startsAt;
+}
+
+function formatTehranSlot(startsAt) {
+  const date = new Date(startsAt);
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    timeZone: "Asia/Tehran",
+    dateStyle: "full",
+    timeStyle: "short"
+  }).format(date);
+}
+
+async function sendDueBookingReminders(env) {
+  const bookings = await getList(env, "bookings");
+  const now = Date.now();
+  const reminderMs = REMINDER_WINDOW_MINUTES * 60 * 1000;
+
+  for (const booking of bookings) {
+    if (booking.status !== "scheduled" || booking.reminderSent || !booking.startsAt) continue;
+
+    const startsAtMs = Date.parse(booking.startsAt);
+    const shouldRemind = startsAtMs > now && startsAtMs - now <= reminderMs;
+    if (!shouldRemind) continue;
+
+    const reminderText = [
+      "⏰ یادآوری نوبت مشاوره",
+      "",
+      `زمان: ${booking.slotLabel}`,
+      `کد: ${booking.id}`,
+      "",
+      "مشاوره تا حدود ۳۰ دقیقه دیگر شروع می‌شود."
+    ].join("\n");
+
+    await sendMessage(env, booking.userId, reminderText);
+    await notifyAdmin(
+      env,
+      [
+        "⏰ یادآوری نوبت مشاوره برای ادمین",
+        "",
+        `زمان: ${booking.slotLabel}`,
+        `کد: ${booking.id}`,
+        `نام: ${booking.name}`,
+        `تماس: ${booking.contact}`,
+        `موضوع: ${booking.topic}`
+      ].join("\n")
+    );
+
+    booking.reminderSent = true;
+    booking.reminderSentAt = new Date().toISOString();
+    await env.BOT_KV.put(`booking:${booking.id}`, JSON.stringify(booking));
+  }
+
+  await env.BOT_KV.put("list:bookings", JSON.stringify(bookings));
 }
 
 function shortId() {
@@ -917,6 +1168,15 @@ async function sendPhoto(env, chatId, photo, caption, extra = {}) {
   return telegram(env, "sendPhoto", {
     chat_id: chatId,
     photo,
+    caption,
+    ...extra
+  });
+}
+
+async function sendVideo(env, chatId, video, caption, extra = {}) {
+  return telegram(env, "sendVideo", {
+    chat_id: chatId,
+    video,
     caption,
     ...extra
   });
