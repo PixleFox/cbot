@@ -117,6 +117,10 @@ const LOCKED_MENU = [
   [{ text: "ℹ️ راهنما", callback_data: "menu:help" }]
 ];
 
+const BACK_TO_MENU = [
+  [{ text: "↩️ برگشت به منو", callback_data: "menu:home" }]
+];
+
 const GENDER_MENU = [
   [{ text: "زن", callback_data: "reg:gender:female" }, { text: "مرد", callback_data: "reg:gender:male" }]
 ];
@@ -142,7 +146,7 @@ const USER_TYPE_LABELS = {
 };
 
 const POST_TYPE_MENU = [
-  [{ text: "🖼 ارسال عکس یا فیلم در کانال", callback_data: "post:type:media" }],
+  [{ text: "🖼 ارسال عکس در کانال", callback_data: "post:type:media" }],
   [{ text: "✍️ ارسال اعترافات در کانال", callback_data: "post:type:confession" }],
   [{ text: "↩️ برگشت", callback_data: "menu:help" }]
 ];
@@ -239,6 +243,16 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "proof_selfie") {
     await handleProofSelfie(env, message, state);
+    return;
+  }
+
+  if (state?.mode === "proof_partner_hijab") {
+    await handleProofPartnerHijab(env, message, state);
+    return;
+  }
+
+  if (state?.mode === "proof_partner_no_hijab") {
+    await handleProofPartnerNoHijab(env, message, state);
     return;
   }
 
@@ -360,6 +374,12 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data === "menu:home") {
+    await clearState(env, userId);
+    await sendHome(env, chatId);
+    return;
+  }
+
   if (data === "menu:test") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     await startTest(env, chatId, userId);
@@ -380,6 +400,7 @@ async function handleCallback(query, env) {
 
   if (data === "post:type:media") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
+    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
     await startMediaPost(env, chatId, userId);
     return;
   }
@@ -634,10 +655,12 @@ async function startCuckoldProof(env, chatId, userId) {
     [
       "🧾 اثبات کاکولدی",
       "",
-      "این مسیر فقط برای اطلاعات رضایتمندانه و مربوط به بزرگسالان است.",
-      "از ارسال عکس خصوصی، برهنه، جنسی یا بدون رضایت خودداری کن.",
+      "برای تایید، چند مرحله کوتاه داری.",
+      "کیفیت فایل‌ها مهم است؛ تصویر واضح، نور مناسب و چهره‌ها قابل تشخیص باشند.",
+      "نکات اخلاقی رعایت شود.",
+      "بعد از بررسی ادمین، شناسه فایل‌ها از حافظه ربات پاک می‌شود.",
       "",
-      "روی چه شخصی کاکولد هستی؟ می‌توانی چند گزینه را انتخاب کنی:"
+      "۱) روی چه شخصی کاکولد هستی؟ می‌توانی چند گزینه را انتخاب کنی:"
     ].join("\n"),
     keyboard(proofRelationshipKeyboard([]))
   );
@@ -681,9 +704,10 @@ async function finishProofRelationshipSelection(env, query) {
     env,
     chatId,
     [
-      "🎙 حالا یک وویس بفرست.",
+      "🎙 مرحله ۲: وویس فانتزی",
       "",
-      "در وویس، فانتزی کاکولدی خودت را به شکل غیرتهدیدآمیز و بدون اطلاعات هویتی دیگران توضیح بده.",
+      "فانتزی کاکولدی‌ات را با وویس توضیح بده.",
+      "بگو چه صحنه‌ای بیشتر تحریک‌ات می‌کند و چرا.",
       "وویس باید بین ۵ تا ۱۸۰ ثانیه باشد."
     ].join("\n")
   );
@@ -707,19 +731,19 @@ async function handleProofVoice(env, message, state) {
     mode: "proof_selfie",
     relationships: state.relationships,
     voiceFileId: voice.file_id,
-    voiceDuration: voice.duration
+    voiceDuration: voice.duration,
+    target
   });
   await sendMessage(
     env,
     chatId,
     [
-      "📷 حالا یک عکس غیرصریح و رضایتمندانه بفرست.",
+      "📷 مرحله ۳: عکس دو نفره",
       "",
-      `موضوع عکس: خودت همراه ${target}`,
-      "کیفیت قابل قبول باشد، صورت‌ها واضح باشند، عکس خصوصی/برهنه/جنسی نباشد.",
-      "برای احترام به حریم خصوصی، بعد از بررسی ادمین، فایل‌های ارسالی از حافظه ربات حذف می‌شوند.",
+      `یک عکس دو نفره از خودت کنار ${target} بفرست.`,
+      "چهره‌ها مشخص، کیفیت خوب، نور مناسب.",
       "",
-      "اگر امکان ارسال عکس رضایتمندانه نداری، این مرحله را انجام نده."
+      "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
     ].join("\n")
   );
 }
@@ -729,6 +753,63 @@ async function handleProofSelfie(env, message, state) {
   const userId = String(message.from.id);
   if (!message.photo?.length) {
     await sendMessage(env, chatId, "❌ لطفاً یک عکس معمولی و غیرصریح بفرست.");
+    return;
+  }
+
+  const profile = await getProfile(env, userId);
+  const photo = message.photo[message.photo.length - 1];
+  await setState(env, userId, {
+    ...state,
+    mode: "proof_partner_hijab",
+    selfiePhotoFileId: photo.file_id
+  });
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🧕 مرحله ۴: عکس با حجاب",
+      "",
+      `یک عکس با حجاب از ${state.target || proofTargetLabel(state.relationships)} بفرست.`,
+      "کیفیت خوب، چهره واضح، نکات اخلاقی رعایت شود.",
+      "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
+    ].join("\n")
+  );
+}
+
+async function handleProofPartnerHijab(env, message, state) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!message.photo?.length) {
+    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.");
+    return;
+  }
+
+  const photo = message.photo[message.photo.length - 1];
+  await setState(env, userId, {
+    ...state,
+    mode: "proof_partner_no_hijab",
+    partnerHijabPhotoFileId: photo.file_id
+  });
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "💫 مرحله ۵: عکس بدون حجاب",
+      "",
+      `یک عکس بدون حجاب از ${state.target || proofTargetLabel(state.relationships)} بفرست.`,
+      "کیفیت خوب، چهره واضح، نکات اخلاقی رعایت شود.",
+      "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
+    ].join("\n")
+  );
+}
+
+async function handleProofPartnerNoHijab(env, message, state) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!message.photo?.length) {
+    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.");
     return;
   }
 
@@ -743,7 +824,9 @@ async function handleProofSelfie(env, message, state) {
     relationships: state.relationships,
     voiceFileId: state.voiceFileId,
     voiceDuration: state.voiceDuration,
-    photoFileId: photo.file_id,
+    selfiePhotoFileId: state.selfiePhotoFileId,
+    partnerHijabPhotoFileId: state.partnerHijabPhotoFileId,
+    partnerNoHijabPhotoFileId: photo.file_id,
     status: "pending",
     createdAt: new Date().toISOString()
   };
@@ -752,7 +835,7 @@ async function handleProofSelfie(env, message, state) {
   await putListItem(env, "proofs", proof);
   await clearState(env, userId);
 
-  await sendMessage(env, chatId, "✅ اطلاعات ثبت شد و منتظر تایید ادمین است.", keyboard(await getMainMenuForUser(env, userId)));
+  await sendMessage(env, chatId, "✅ اطلاعات ثبت شد و منتظر تایید ادمین بمان.", keyboard(await getMainMenuForUser(env, userId)));
   await sendProofToAdmin(env, proof, profile, message.from);
 }
 
@@ -777,7 +860,9 @@ async function sendProofToAdmin(env, proof, profile, user) {
     ].join("\n")
   );
   await sendVoice(env, env.ADMIN_CHAT_ID, proof.voiceFileId, `🎙 وویس اثبات - کد ${proof.id}`);
-  await sendPhoto(env, env.ADMIN_CHAT_ID, proof.photoFileId, `📷 عکس اثبات - کد ${proof.id}`, controls);
+  await sendPhoto(env, env.ADMIN_CHAT_ID, proof.selfiePhotoFileId, `📷 عکس ۱: دو نفره - کد ${proof.id}`);
+  await sendPhoto(env, env.ADMIN_CHAT_ID, proof.partnerHijabPhotoFileId, `🧕 عکس ۲: با حجاب - کد ${proof.id}`);
+  await sendPhoto(env, env.ADMIN_CHAT_ID, proof.partnerNoHijabPhotoFileId, `💫 عکس ۳: بدون حجاب - کد ${proof.id}`, controls);
 }
 
 async function approveProof(env, query, proofId) {
@@ -794,7 +879,9 @@ async function approveProof(env, query, proofId) {
   proof.reviewedAt = new Date().toISOString();
   proof.reviewedBy = String(query.from.id);
   proof.voiceFileId = "";
-  proof.photoFileId = "";
+  proof.selfiePhotoFileId = "";
+  proof.partnerHijabPhotoFileId = "";
+  proof.partnerNoHijabPhotoFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
 
   const profile = await getProfile(env, proof.userId);
@@ -822,7 +909,9 @@ async function rejectProof(env, query, proofId) {
   proof.reviewedAt = new Date().toISOString();
   proof.reviewedBy = String(query.from.id);
   proof.voiceFileId = "";
-  proof.photoFileId = "";
+  proof.selfiePhotoFileId = "";
+  proof.partnerHijabPhotoFileId = "";
+  proof.partnerNoHijabPhotoFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
 
   await sendMessage(env, proof.userId, "❌ درخواست اثبات کاکولدی تایید نشد.");
@@ -1197,7 +1286,7 @@ async function startPostSubmission(env, chatId, userId) {
       "",
       "نوع پست را انتخاب کن:",
       "",
-      "🖼 عکس/فیلم: اول فایل، بعد کپشن",
+      "🖼 عکس: اول فایل، بعد کپشن",
       "✍️ اعترافات: فقط متن، حداقل ۱۰ کلمه"
     ].join("\n"),
     keyboard(POST_TYPE_MENU)
@@ -1210,9 +1299,9 @@ async function startMediaPost(env, chatId, userId) {
     env,
     chatId,
     [
-      "🖼 ارسال عکس یا فیلم",
+      "🖼 ارسال عکس",
       "",
-      "اول خود عکس یا فیلم را بفرست.",
+      "اول خود عکس را بفرست.",
       "بعد از دریافت فایل، کپشن را جداگانه می‌پرسم.",
       "",
       "لغو: /cancel"
@@ -1242,7 +1331,7 @@ async function handleMediaPostFile(env, message) {
   const media = normalizeMediaFile(message);
 
   if (!media.ok) {
-    await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس یا فیلم بفرست.`);
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس بفرست.`);
     return;
   }
 
@@ -1254,7 +1343,7 @@ async function handleMediaPostCaption(env, message, state, text) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   const caption = cleanText(text);
-  const limit = state.media.kind === "video" ? MAX_VIDEO_CAPTION_LENGTH : MAX_PHOTO_CAPTION_LENGTH;
+  const limit = MAX_PHOTO_CAPTION_LENGTH;
 
   if (!caption || caption.length < 5) {
     await sendMessage(env, chatId, "❌ کپشن خیلی کوتاه است. حداقل ۵ کاراکتر بفرست:");
@@ -1568,10 +1657,6 @@ function normalizeMediaFile(message) {
     return { ok: true, kind: "photo", fileId: largestPhoto.file_id };
   }
 
-  if (message.video?.file_id) {
-    return { ok: true, kind: "video", fileId: message.video.file_id };
-  }
-
   return { ok: false, error: "نوع فایل درست نیست." };
 }
 
@@ -1701,7 +1786,7 @@ async function ensureVerifiedCuckold(env, chatId, userId) {
       "این بخش فقط برای کاکولدهای تایید شده فعال است.",
       "اگر کاکولد هستی، اول از دکمه «اثبات کاکولدی» اقدام کن."
     ].join("\n"),
-    keyboard(await getMainMenuForUser(env, userId))
+    keyboard(BACK_TO_MENU)
   );
   return false;
 }
