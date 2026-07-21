@@ -153,9 +153,14 @@ const POST_TYPE_MENU = [
 
 const ADMIN_MENU = [
   [{ text: "➕ افزودن زمان مشاوره", callback_data: "admin:add_slot" }],
+  [{ text: "💧 افزودن زمان تخلیه آب بیغیرتی", callback_data: "admin:add_release_slot" }],
   [{ text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" }],
   [{ text: "🧾 بررسی اثبات کاکولدی", callback_data: "admin:list_proofs" }],
+  [{ text: "✅ لیست کاکولدهای تایید شده", callback_data: "admin:list_verified_cuckolds" }],
+  [{ text: "👥 لیست ثبت نامی‌ها", callback_data: "admin:list_profiles" }],
+  [{ text: "📣 ارسال پیام به کاربران", callback_data: "admin:broadcast_start" }],
   [{ text: "📊 خروجی Excel درخواست‌ها", callback_data: "admin:export_bookings" }],
+  [{ text: "📈 دریافت اکسل جامع", callback_data: "admin:export_comprehensive" }],
   [{ text: "📦 آمار سریع", callback_data: "admin:stats" }]
 ];
 
@@ -223,6 +228,16 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "admin_add_slot") {
     await finishAddSlot(env, message, text);
+    return;
+  }
+
+  if (state?.mode === "admin_add_release_slot") {
+    await finishAddReleaseSlot(env, message, text);
+    return;
+  }
+
+  if (state?.mode === "admin_broadcast_text") {
+    await finishBroadcastText(env, message, text);
     return;
   }
 
@@ -369,6 +384,12 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data.startsWith("proof:view:")) {
+    if (!isAdmin(env, userId)) return;
+    await viewProof(env, query, data.replace("proof:view:", ""));
+    return;
+  }
+
   if (data === "menu:help") {
     await sendHelp(env, chatId);
     return;
@@ -425,6 +446,12 @@ async function handleCallback(query, env) {
     } else {
       await finishBookingWithSlot(env, query, state, data.replace("slot:pick:", ""));
     }
+    return;
+  }
+
+  if (data.startsWith("broadcast:send:")) {
+    if (!isAdmin(env, userId)) return;
+    await sendBroadcast(env, query, data.replace("broadcast:send:", ""));
     return;
   }
 
@@ -1021,7 +1048,7 @@ async function startBooking(env, chatId, userId) {
     return;
   }
 
-  const slots = await getOpenSlots(env);
+  const slots = await getOpenSlots(env, 12, "consultation");
   if (!slots.length) {
     await sendMessage(env, chatId, "📅 فعلاً زمان آزادی برای مشاوره ثبت نشده. بعداً دوباره چک کن.", keyboard(await getMainMenuForUser(env, userId)));
     return;
@@ -1071,7 +1098,7 @@ async function handleBookingTopic(env, message, state, text) {
     return;
   }
 
-  const slots = await getOpenSlots(env);
+  const slots = await getOpenSlots(env, 12, "consultation");
   if (!slots.length) {
     await clearState(env, userId);
     await sendMessage(env, chatId, "متأسفانه همین الان زمان آزادی باقی نمانده.", keyboard(await getMainMenuForUser(env, userId)));
@@ -1194,7 +1221,7 @@ async function handleReleaseVoice(env, message, state) {
     return;
   }
 
-  const slots = await getOpenSlots(env);
+  const slots = await getOpenSlots(env, 12, "release");
   if (!slots.length) {
     await clearState(env, userId);
     await sendMessage(env, chatId, "فعلاً زمان آزادی برای این درخواست ثبت نشده.", keyboard(await getMainMenuForUser(env, userId)));
@@ -1527,6 +1554,16 @@ async function handleAdminCallback(env, query, data) {
     return;
   }
 
+  if (data === "admin:add_release_slot") {
+    await setState(env, String(query.from.id), { mode: "admin_add_release_slot" });
+    await sendMessage(
+      env,
+      chatId,
+      "💧 زمان تخلیه آب بیغیرتی را وارد کن.\n\nفرمت:\n2026-07-22 20:30\n\nلغو: /cancel"
+    );
+    return;
+  }
+
   if (data === "admin:list_slots") {
     const slots = await getOpenSlots(env, 20);
     if (!slots.length) {
@@ -1549,14 +1586,60 @@ async function handleAdminCallback(env, query, data) {
     return;
   }
 
+  if (data === "admin:list_verified_cuckolds") {
+    await listVerifiedCuckolds(env, chatId);
+    return;
+  }
+
+  if (data === "admin:list_profiles") {
+    await listProfiles(env, chatId);
+    return;
+  }
+
+  if (data === "admin:broadcast_start") {
+    await setState(env, String(query.from.id), { mode: "admin_broadcast_text" });
+    await sendMessage(env, chatId, "📣 متن پیام را بفرست.\n\nبعد از آن گروه دریافت‌کننده را انتخاب می‌کنی.\nلغو: /cancel");
+    return;
+  }
+
+  if (data === "admin:export_profiles") {
+    await exportProfiles(env, chatId);
+    return;
+  }
+
+  if (data === "admin:export_verified_cuckolds") {
+    await exportVerifiedCuckolds(env, chatId);
+    return;
+  }
+
+  if (data === "admin:export_comprehensive") {
+    await exportComprehensive(env, chatId);
+    return;
+  }
+
   if (data === "admin:stats") {
     const bookings = await getList(env, "bookings");
     const posts = await getList(env, "posts");
     const tests = await getList(env, "test_results");
+    const profiles = await getProfiles(env);
+    const proofs = await getList(env, "proofs");
+    const releases = await getList(env, "release_requests");
+    const verified = profiles.filter((profile) => profile.cuckoldVerified);
     await sendMessage(
       env,
       chatId,
-      [`📦 آمار سریع`, "", `نوبت‌ها: ${bookings.length}`, `پست‌ها: ${posts.length}`, `نتایج آزمون: ${tests.length}`].join("\n"),
+      [
+        `📦 آمار سریع`,
+        "",
+        `ثبت‌نامی‌ها: ${profiles.length}`,
+        `کاکولدهای تایید شده: ${verified.length}`,
+        `درخواست‌های اثبات: ${proofs.length}`,
+        `اثبات‌های در انتظار: ${proofs.filter((proof) => proof.status === "pending").length}`,
+        `نوبت‌های مشاوره: ${bookings.length}`,
+        `درخواست‌های تخلیه: ${releases.length}`,
+        `پست‌ها: ${posts.length}`,
+        `نتایج تست غیرت: ${tests.length}`
+      ].join("\n"),
       keyboard(ADMIN_MENU)
     );
   }
@@ -1578,6 +1661,7 @@ async function finishAddSlot(env, message, text) {
     id: shortId(),
     label: formatTehranSlot(startsAt),
     startsAt,
+    purpose: "consultation",
     status: "open",
     createdAt: new Date().toISOString(),
     createdBy: userId
@@ -1586,6 +1670,33 @@ async function finishAddSlot(env, message, text) {
   await putListItem(env, "slots", slot);
   await clearState(env, userId);
   await sendMessage(env, chatId, `✅ زمان اضافه شد:\n${slot.label}`, keyboard(ADMIN_MENU));
+}
+
+async function finishAddReleaseSlot(env, message, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const slotLabel = cleanText(text);
+  const startsAt = parseTehranDateTime(slotLabel);
+  if (!startsAt) {
+    await sendMessage(env, chatId, "❌ زمان را با فرمت دقیق بفرست:\n\n2026-07-22 20:30");
+    return;
+  }
+
+  const slot = {
+    id: shortId(),
+    label: formatTehranSlot(startsAt),
+    startsAt,
+    purpose: "release",
+    status: "open",
+    createdAt: new Date().toISOString(),
+    createdBy: userId
+  };
+  await env.BOT_KV.put(`slot:${slot.id}`, JSON.stringify(slot));
+  await putListItem(env, "slots", slot);
+  await clearState(env, userId);
+  await sendMessage(env, chatId, `✅ زمان تخلیه اضافه شد:\n${slot.label}`, keyboard(ADMIN_MENU));
 }
 
 async function closeSlot(env, query, slotId) {
@@ -1615,14 +1726,30 @@ async function listPendingProofs(env, chatId) {
     return;
   }
 
+  const rows = [];
+  const lines = ["🧾 درخواست‌های اثبات در انتظار", ""];
   for (const proof of proofs) {
     const profile = await getProfile(env, proof.userId);
-    await sendProofToAdmin(env, proof, profile, {
-      id: proof.userId,
-      username: proof.username,
-      first_name: proof.firstName
-    });
+    lines.push(`${formatDateTime(proof.createdAt)} | ${profile?.name || proof.firstName || "-"} | ${proof.username ? `@${proof.username}` : proof.userId}`);
+    rows.push([{ text: `باز کردن ${profile?.name || proof.firstName || proof.id}`, callback_data: `proof:view:${proof.id}` }]);
   }
+
+  await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function viewProof(env, query, proofId) {
+  const chatId = String(query.message.chat.id);
+  const proof = await getJson(env, `proof:${proofId}`);
+  if (!proof || proof.status !== "pending") {
+    await sendMessage(env, chatId, "این درخواست دیگر در انتظار بررسی نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+  const profile = await getProfile(env, proof.userId);
+  await sendProofToAdmin(env, proof, profile, {
+    id: proof.userId,
+    username: proof.username,
+    first_name: proof.firstName
+  });
 }
 
 async function exportBookings(env, chatId) {
@@ -1646,9 +1773,134 @@ async function exportBookings(env, chatId) {
       item.createdAt
     ])
   ];
-  const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\n");
-  const filename = `bookings-${new Date().toISOString().slice(0, 10)}.csv`;
-  await sendDocument(env, chatId, csv, filename, "📊 فایل خروجی درخواست‌های مشاوره؛ در Excel باز می‌شود.");
+  await sendCsv(env, chatId, `bookings-${today()}.csv`, rows, "📊 فایل خروجی درخواست‌های مشاوره؛ در Excel باز می‌شود.");
+}
+
+async function listVerifiedCuckolds(env, chatId) {
+  const profiles = (await getProfiles(env)).filter((profile) => profile.cuckoldVerified);
+  if (!profiles.length) {
+    await sendMessage(env, chatId, "هنوز کاکولد تایید شده نداریم.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  await sendMessage(env, chatId, formatProfilesTable("✅ کاکولدهای تایید شده", profiles), keyboard([
+    [{ text: "📥 Excel کاکولدهای تایید شده", callback_data: "admin:export_verified_cuckolds" }],
+    [{ text: "↩️ پنل ادمین", callback_data: "admin:stats" }]
+  ]));
+}
+
+async function listProfiles(env, chatId) {
+  const profiles = await getProfiles(env);
+  if (!profiles.length) {
+    await sendMessage(env, chatId, "هنوز ثبت‌نامی نداریم.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  await sendMessage(env, chatId, formatProfilesTable("👥 ثبت‌نامی‌ها", profiles), keyboard([
+    [{ text: "📥 Excel ثبت‌نامی‌ها", callback_data: "admin:export_profiles" }],
+    [{ text: "↩️ پنل ادمین", callback_data: "admin:stats" }]
+  ]));
+}
+
+async function finishBroadcastText(env, message, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const body = cleanText(text);
+  if (body.length < 2 || body.length > 3500) {
+    await sendMessage(env, chatId, "❌ متن پیام باید بین ۲ تا ۳۵۰۰ کاراکتر باشد. دوباره بفرست:");
+    return;
+  }
+
+  await setState(env, userId, { mode: "admin_broadcast_target", body });
+  await sendMessage(env, chatId, "گیرنده‌ها را انتخاب کن:", keyboard([
+    [{ text: "همه کاربران", callback_data: "broadcast:send:all" }],
+    [{ text: "همه کاکولدها", callback_data: "broadcast:send:cuckolds" }],
+    [{ text: "کاکولدهای تایید شده", callback_data: "broadcast:send:verified_cuckolds" }],
+    [{ text: "لغو", callback_data: "menu:home" }]
+  ]));
+}
+
+async function sendBroadcast(env, query, target) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const state = await getState(env, userId);
+  if (!state?.body) {
+    await sendMessage(env, chatId, "متن پیام پیدا نشد. دوباره از پنل ادمین شروع کن.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const profiles = await getProfiles(env);
+  const recipients = profiles.filter((profile) => {
+    if (target === "all") return true;
+    if (target === "cuckolds") return profile.type === "cuckold";
+    if (target === "verified_cuckolds") return profile.type === "cuckold" && profile.cuckoldVerified;
+    return false;
+  });
+
+  let sent = 0;
+  let failed = 0;
+  for (const profile of recipients) {
+    try {
+      await sendMessage(env, profile.userId, state.body);
+      sent += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  await clearState(env, userId);
+  await sendMessage(env, chatId, `📣 ارسال پیام تمام شد.\n\nارسال موفق: ${sent}\nناموفق: ${failed}`, keyboard(ADMIN_MENU));
+}
+
+async function exportProfiles(env, chatId) {
+  const profiles = await getProfiles(env);
+  await sendCsv(env, chatId, `profiles-${today()}.csv`, profileRows(profiles), "📥 Excel ثبت‌نامی‌ها");
+}
+
+async function exportVerifiedCuckolds(env, chatId) {
+  const profiles = (await getProfiles(env)).filter((profile) => profile.cuckoldVerified);
+  await sendCsv(env, chatId, `verified-cuckolds-${today()}.csv`, profileRows(profiles), "📥 Excel کاکولدهای تایید شده");
+}
+
+async function exportComprehensive(env, chatId) {
+  const profiles = await getProfiles(env);
+  const bookings = await getList(env, "bookings");
+  const releases = await getList(env, "release_requests");
+  const posts = await getList(env, "posts");
+  const tests = await getList(env, "test_results");
+  const proofs = await getList(env, "proofs");
+
+  const rows = [
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_percent", "booking_count", "release_count", "post_count", "proof_statuses"],
+    ...profiles.map((profile) => {
+      const userTests = tests.filter((item) => item.userId === profile.userId);
+      const lastTest = userTests[userTests.length - 1];
+      return [
+        profile.userId,
+        profile.name,
+        profile.username,
+        profile.age,
+        profile.gender,
+        profile.marital,
+        profile.city,
+        profile.typeLabel || profile.type,
+        profile.cuckoldVerified ? "yes" : "no",
+        profile.createdAt,
+        userTests.length,
+        lastTest?.percent ?? "",
+        bookings.filter((item) => item.userId === profile.userId).length,
+        releases.filter((item) => item.userId === profile.userId).length,
+        posts.filter((item) => item.userId === profile.userId).length,
+        proofs.filter((item) => item.userId === profile.userId).map((item) => item.status).join("|")
+      ];
+    })
+  ];
+
+  await sendCsv(env, chatId, `comprehensive-users-${today()}.csv`, rows, "📈 Excel جامع کاربران");
 }
 
 function normalizeMediaFile(message) {
@@ -1706,7 +1958,7 @@ async function checkCooldown(env, userId, action, seconds) {
   return true;
 }
 
-async function getOpenSlots(env, limit = 12) {
+async function getOpenSlots(env, limit = 12, purpose = "") {
   const slotRefs = await getList(env, "slots");
   const slots = [];
   for (const slotRef of slotRefs) {
@@ -1716,6 +1968,7 @@ async function getOpenSlots(env, limit = 12) {
   const now = Date.now();
   return slots
     .filter((slot) => slot.status === "open")
+    .filter((slot) => !purpose || (slot.purpose || "consultation") === purpose)
     .filter((slot) => !slot.startsAt || Date.parse(slot.startsAt) > now)
     .sort((a, b) => Date.parse(a.startsAt || "9999-12-31") - Date.parse(b.startsAt || "9999-12-31"))
     .slice(0, limit);
@@ -1761,6 +2014,16 @@ function isAdmin(env, userId) {
 
 async function getProfile(env, userId) {
   return getJson(env, `profile:${userId}`);
+}
+
+async function getProfiles(env) {
+  const refs = await getList(env, "profiles");
+  const byUser = new Map();
+  for (const ref of refs) {
+    const latest = await getProfile(env, ref.userId);
+    if (latest?.registered) byUser.set(latest.userId, latest);
+  }
+  return [...byUser.values()];
 }
 
 async function ensureRegistered(env, chatId, userId) {
@@ -1813,6 +2076,46 @@ function formatUser(user) {
 
 function cleanText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function formatProfilesTable(title, profiles) {
+  const lines = [title, ""];
+  for (const profile of profiles.slice(0, 30)) {
+    lines.push(`${profile.name || "-"} | ${profile.username || "-"} | ${profile.age || "-"} | ${profile.city || "-"} | ${profile.typeLabel || profile.type || "-"} | ${profile.cuckoldVerified ? "تایید" : "بدون تایید"}`);
+  }
+  if (profiles.length > 30) lines.push(`... و ${profiles.length - 30} مورد دیگر`);
+  return lines.join("\n");
+}
+
+function profileRows(profiles) {
+  return [
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at"],
+    ...profiles.map((profile) => [
+      profile.userId,
+      profile.name,
+      profile.username,
+      profile.age,
+      profile.gender,
+      profile.marital,
+      profile.city,
+      profile.typeLabel || profile.type,
+      profile.cuckoldVerified ? "yes" : "no",
+      profile.createdAt
+    ])
+  ];
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("fa-IR", {
+    timeZone: "Asia/Tehran",
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(new Date(value));
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function wordCount(value) {
@@ -1966,6 +2269,11 @@ function shortId() {
 
 function csvCell(value) {
   return `"${String(value || "").replace(/"/g, '""')}"`;
+}
+
+async function sendCsv(env, chatId, filename, rows, caption) {
+  const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  await sendDocument(env, chatId, csv, filename, caption);
 }
 
 async function sha256(text) {
