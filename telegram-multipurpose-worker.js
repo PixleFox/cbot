@@ -103,9 +103,12 @@ const QUESTIONS = [
 ];
 
 const MAIN_MENU = [
-  [{ text: "🧪 آزمون پژوهشی", callback_data: "menu:test" }],
+  [{ text: "🧪 تست غیرت", callback_data: "menu:test" }],
   [{ text: "📅 نوبت مشاوره", callback_data: "menu:booking" }],
-  [{ text: "📝 ارسال پست برای تایید", callback_data: "menu:submit" }],
+  [{ text: "🖼 ارسال عکس", callback_data: "post:type:media" }],
+  [{ text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }],
+  [{ text: "🔞 عضویت در گروه VIP کاکولدی", callback_data: "vip:join" }],
+  [{ text: "💧 تخلیه آب بیغیرتی", callback_data: "release:start" }],
   [{ text: "ℹ️ راهنما", callback_data: "menu:help" }]
 ];
 
@@ -124,7 +127,12 @@ const MARITAL_MENU = [
   [{ text: "در رابطه", callback_data: "reg:marital:relationship" }]
 ];
 
-const CITY_OPTIONS = ["تهران", "مشهد", "اصفهان", "شیراز", "تبریز", "کرج", "رشت", "اهواز", "قم", "سایر"];
+const CITY_OPTIONS = [
+  "تهران", "مشهد", "اصفهان", "شیراز", "تبریز", "کرج", "رشت", "اهواز", "قم", "کرمانشاه",
+  "ارومیه", "زاهدان", "همدان", "یزد", "اردبیل", "بندرعباس", "اراک", "قزوین", "زنجان", "سنندج",
+  "خرم‌آباد", "گرگان", "ساری", "بابل", "کاشان", "بوشهر", "کرمان", "بیرجند", "ایلام", "شهرکرد",
+  "سمنان", "یاسوج", "قشم", "کیش", "سایر"
+];
 
 const USER_TYPE_LABELS = {
   cuckold: "کاکولد",
@@ -171,7 +179,10 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(sendDueBookingReminders(env));
+    ctx.waitUntil(Promise.all([
+      sendDueBookingReminders(env),
+      sendDueReleaseReminders(env)
+    ]));
   }
 };
 
@@ -228,6 +239,11 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "proof_selfie") {
     await handleProofSelfie(env, message, state);
+    return;
+  }
+
+  if (state?.mode === "release_voice") {
+    await handleReleaseVoice(env, message, state);
     return;
   }
 
@@ -307,6 +323,16 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data === "vip:join") {
+    await handleVipJoin(env, chatId, userId);
+    return;
+  }
+
+  if (data === "release:start") {
+    await startReleaseFlow(env, chatId, userId);
+    return;
+  }
+
   if (data.startsWith("proof:rel:")) {
     await handleProofRelationship(env, query, data.replace("proof:rel:", ""));
     return;
@@ -318,11 +344,13 @@ async function handleCallback(query, env) {
   }
 
   if (data.startsWith("proof:approve:")) {
+    if (!isAdmin(env, userId)) return;
     await approveProof(env, query, data.replace("proof:approve:", ""));
     return;
   }
 
   if (data.startsWith("proof:reject:")) {
+    if (!isAdmin(env, userId)) return;
     await rejectProof(env, query, data.replace("proof:reject:", ""));
     return;
   }
@@ -371,7 +399,11 @@ async function handleCallback(query, env) {
 
   if (data.startsWith("slot:pick:")) {
     const state = await getState(env, userId);
-    await finishBookingWithSlot(env, query, state, data.replace("slot:pick:", ""));
+    if (state?.mode === "release_slot") {
+      await finishReleaseWithSlot(env, query, state, data.replace("slot:pick:", ""));
+    } else {
+      await finishBookingWithSlot(env, query, state, data.replace("slot:pick:", ""));
+    }
     return;
   }
 
@@ -442,7 +474,8 @@ async function sendHelp(env, chatId) {
       "ℹ️ راهنما",
       "",
       "برای فعال شدن امکانات باید ثبت‌نام را کامل کنی.",
-      "بعد از ثبت‌نام، آزمون، نوبت مشاوره و ارسال پست فعال می‌شود.",
+      "بعد از ثبت‌نام، تست غیرت، نوبت مشاوره، ارسال عکس و ارسال اعتراف فعال می‌شود.",
+      "عضویت VIP و تخلیه آب بیغیرتی فقط برای کاکولدهای تایید شده فعال است.",
       "",
       "لغو هر مسیر: /cancel"
     ].join("\n"),
@@ -684,6 +717,7 @@ async function handleProofVoice(env, message, state) {
       "",
       `موضوع عکس: خودت همراه ${target}`,
       "کیفیت قابل قبول باشد، صورت‌ها واضح باشند، عکس خصوصی/برهنه/جنسی نباشد.",
+      "برای احترام به حریم خصوصی، بعد از بررسی ادمین، فایل‌های ارسالی از حافظه ربات حذف می‌شوند.",
       "",
       "اگر امکان ارسال عکس رضایتمندانه نداری، این مرحله را انجام نده."
     ].join("\n")
@@ -759,6 +793,8 @@ async function approveProof(env, query, proofId) {
   proof.status = "approved";
   proof.reviewedAt = new Date().toISOString();
   proof.reviewedBy = String(query.from.id);
+  proof.voiceFileId = "";
+  proof.photoFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
 
   const profile = await getProfile(env, proof.userId);
@@ -785,6 +821,8 @@ async function rejectProof(env, query, proofId) {
   proof.status = "rejected";
   proof.reviewedAt = new Date().toISOString();
   proof.reviewedBy = String(query.from.id);
+  proof.voiceFileId = "";
+  proof.photoFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
 
   await sendMessage(env, proof.userId, "❌ درخواست اثبات کاکولدی تایید نشد.");
@@ -802,7 +840,7 @@ async function startTest(env, chatId, userId) {
     env,
     chatId,
     [
-      "🧪 آزمون پژوهشی",
+      "🧪 تست غیرت",
       "",
       "این آزمون صرفاً خودسنجی و غیرتشخیصی است.",
       "برای روابط بالغ، آگاهانه و رضایتمندانه طراحی شده.",
@@ -1020,6 +1058,131 @@ async function finishBookingWithSlot(env, query, state, slotId) {
   );
 }
 
+async function handleVipJoin(env, chatId, userId) {
+  if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🔞 عضویت VIP کاکولدی",
+      "",
+      "کاکولدی شما تایید شده است.",
+      "لینک عضویت:",
+      "https://t.me/+-0j3TCOzQMM1ZjJk"
+    ].join("\n")
+  );
+}
+
+async function startReleaseFlow(env, chatId, userId) {
+  if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+
+  await setState(env, userId, { mode: "release_voice" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "💧 تخلیه آب بیغیرتی",
+      "",
+      "یک وویس بفرست و دقیقاً بگو:",
+      "«آب بیغیرتیم زده بالا بیا کمکم کن»",
+      "",
+      "بعد از وویس، زمان آزاد را انتخاب می‌کنی."
+    ].join("\n")
+  );
+}
+
+async function handleReleaseVoice(env, message, state) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const voice = message.voice;
+  if (!voice?.file_id) {
+    await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.");
+    return;
+  }
+  if (voice.duration < 2 || voice.duration > 120) {
+    await sendMessage(env, chatId, "❌ وویس باید بین ۲ تا ۱۲۰ ثانیه باشد. دوباره بفرست:");
+    return;
+  }
+
+  const slots = await getOpenSlots(env);
+  if (!slots.length) {
+    await clearState(env, userId);
+    await sendMessage(env, chatId, "فعلاً زمان آزادی برای این درخواست ثبت نشده.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+
+  await setState(env, userId, {
+    mode: "release_slot",
+    voiceFileId: voice.file_id,
+    voiceDuration: voice.duration
+  });
+  await sendMessage(env, chatId, "🗓 زمان آزاد را انتخاب کن:", keyboard(slots.slice(0, 12).map((slot) => [
+    { text: slot.label, callback_data: `slot:pick:${slot.id}` }
+  ])));
+}
+
+async function finishReleaseWithSlot(env, query, state, slotId) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  if (!state || state.mode !== "release_slot") {
+    await sendMessage(env, chatId, "برای ثبت درخواست تخلیه، از منو شروع کن.");
+    return;
+  }
+
+  const slot = await getJson(env, `slot:${slotId}`);
+  if (!slot || slot.status !== "open") {
+    await sendMessage(env, chatId, "این زمان دیگر آزاد نیست. دوباره از منو شروع کن.", keyboard(await getMainMenuForUser(env, userId)));
+    await clearState(env, userId);
+    return;
+  }
+
+  const requestId = shortId();
+  const request = {
+    id: requestId,
+    userId,
+    username: query.from.username || "",
+    firstName: query.from.first_name || "",
+    voiceFileId: state.voiceFileId,
+    voiceDuration: state.voiceDuration,
+    slotId,
+    slotLabel: slot.label,
+    startsAt: slot.startsAt || "",
+    status: "scheduled",
+    type: "release",
+    reminderSent: false,
+    createdAt: new Date().toISOString()
+  };
+
+  slot.status = "booked";
+  slot.bookedBy = userId;
+  slot.releaseRequestId = requestId;
+  await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
+  await updateListItem(env, "slots", slotId, (item) => ({ ...item, status: "booked", bookedBy: userId, releaseRequestId: requestId }));
+  await env.BOT_KV.put(`release:${requestId}`, JSON.stringify(request));
+  await putListItem(env, "release_requests", request);
+  await clearState(env, userId);
+
+  await sendMessage(
+    env,
+    chatId,
+    [`✅ درخواست ثبت شد`, "", `کد: ${requestId}`, `زمان: ${slot.label}`].join("\n"),
+    keyboard(await getMainMenuForUser(env, userId))
+  );
+
+  await notifyAdmin(
+    env,
+    [
+      "💧 درخواست تخلیه آب بیغیرتی",
+      "",
+      `کد: ${requestId}`,
+      `زمان: ${slot.label}`,
+      `کاربر: ${formatUser(query.from)}`
+    ].join("\n")
+  );
+  await sendVoice(env, env.ADMIN_CHAT_ID, state.voiceFileId, `🎙 وویس تخلیه - کد ${requestId}`);
+}
+
 async function startPostSubmission(env, chatId, userId) {
   if (!(await checkCooldown(env, userId, "post", POST_COOLDOWN_SECONDS))) {
     await sendMessage(env, chatId, "⏳ برای جلوگیری از اسپم، بین ارسال پست‌ها کمی فاصله بگذار.");
@@ -1030,7 +1193,7 @@ async function startPostSubmission(env, chatId, userId) {
     env,
     chatId,
     [
-      "📝 ارسال پست برای تایید",
+      "📝 ارسال محتوا",
       "",
       "نوع پست را انتخاب کن:",
       "",
@@ -1523,6 +1686,26 @@ async function ensureRegistered(env, chatId, userId) {
   return false;
 }
 
+async function ensureVerifiedCuckold(env, chatId, userId) {
+  const profile = await getProfile(env, userId);
+  if (profile?.registered && profile.gender === "male" && profile.type === "cuckold" && profile.cuckoldVerified) {
+    return true;
+  }
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "⛔️ کاکولدی شما تایید نشده است.",
+      "",
+      "این بخش فقط برای کاکولدهای تایید شده فعال است.",
+      "اگر کاکولد هستی، اول از دکمه «اثبات کاکولدی» اقدام کن."
+    ].join("\n"),
+    keyboard(await getMainMenuForUser(env, userId))
+  );
+  return false;
+}
+
 async function getMainMenuForUser(env, userId) {
   const profile = await getProfile(env, userId);
   if (!profile?.registered) return LOCKED_MENU;
@@ -1660,6 +1843,36 @@ async function sendDueBookingReminders(env) {
   }
 
   await env.BOT_KV.put("list:bookings", JSON.stringify(bookings));
+}
+
+async function sendDueReleaseReminders(env) {
+  const requests = await getList(env, "release_requests");
+  const now = Date.now();
+  const reminderMs = REMINDER_WINDOW_MINUTES * 60 * 1000;
+
+  for (const request of requests) {
+    if (request.status !== "scheduled" || request.reminderSent || !request.startsAt) continue;
+
+    const startsAtMs = Date.parse(request.startsAt);
+    const shouldRemind = startsAtMs > now && startsAtMs - now <= reminderMs;
+    if (!shouldRemind) continue;
+
+    await sendMessage(
+      env,
+      request.userId,
+      ["⏰ یادآوری تخلیه آب بیغیرتی", "", `زمان: ${request.slotLabel}`, `کد: ${request.id}`].join("\n")
+    );
+    await notifyAdmin(
+      env,
+      ["⏰ یادآوری درخواست تخلیه برای ادمین", "", `زمان: ${request.slotLabel}`, `کد: ${request.id}`, `کاربر: @${request.username || "-"}`].join("\n")
+    );
+
+    request.reminderSent = true;
+    request.reminderSentAt = new Date().toISOString();
+    await env.BOT_KV.put(`release:${request.id}`, JSON.stringify(request));
+  }
+
+  await env.BOT_KV.put("list:release_requests", JSON.stringify(requests));
 }
 
 function shortId() {
