@@ -675,6 +675,22 @@ async function startCuckoldProof(env, chatId, userId) {
     return;
   }
 
+  const pendingProof = await getPendingProofForUser(env, userId);
+  if (pendingProof) {
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "⏳ شما یک درخواست اثبات در انتظار بررسی دارید.",
+        "",
+        `کد درخواست: ${pendingProof.id}`,
+        "تا وقتی ادمین آن را تایید یا رد نکرده، نمی‌توانید درخواست جدید ثبت کنید."
+      ].join("\n"),
+      keyboard(await getMainMenuForUser(env, userId))
+    );
+    return;
+  }
+
   await setState(env, userId, { mode: "proof_relationship", selected: [] });
   await sendMessage(
     env,
@@ -910,6 +926,7 @@ async function approveProof(env, query, proofId) {
   proof.partnerHijabPhotoFileId = "";
   proof.partnerNoHijabPhotoFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
+  await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "approved", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy }));
 
   const profile = await getProfile(env, proof.userId);
   if (profile) {
@@ -940,6 +957,7 @@ async function rejectProof(env, query, proofId) {
   proof.partnerHijabPhotoFileId = "";
   proof.partnerNoHijabPhotoFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
+  await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "rejected", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy }));
 
   await sendMessage(env, proof.userId, "❌ درخواست اثبات کاکولدی تایید نشد.");
   await sendMessage(env, chatId, `❌ درخواست رد شد.\nکد: ${proofId}`);
@@ -1622,7 +1640,8 @@ async function handleAdminCallback(env, query, data) {
     const posts = await getList(env, "posts");
     const tests = await getList(env, "test_results");
     const profiles = await getProfiles(env);
-    const proofs = await getList(env, "proofs");
+    const proofs = await getProofs(env);
+    const pendingProofs = proofs.filter((proof) => proof.status === "pending");
     const releases = await getList(env, "release_requests");
     const verified = profiles.filter((profile) => profile.cuckoldVerified);
     await sendMessage(
@@ -1634,7 +1653,7 @@ async function handleAdminCallback(env, query, data) {
         `ثبت‌نامی‌ها: ${profiles.length}`,
         `کاکولدهای تایید شده: ${verified.length}`,
         `درخواست‌های اثبات: ${proofs.length}`,
-        `اثبات‌های در انتظار: ${proofs.filter((proof) => proof.status === "pending").length}`,
+        `اثبات‌های در انتظار: ${pendingProofs.length}`,
         `نوبت‌های مشاوره: ${bookings.length}`,
         `درخواست‌های تخلیه: ${releases.length}`,
         `پست‌ها: ${posts.length}`,
@@ -1720,7 +1739,7 @@ async function sendAdminPanel(env, chatId) {
 }
 
 async function listPendingProofs(env, chatId) {
-  const proofs = (await getList(env, "proofs")).filter((proof) => proof.status === "pending").slice(-10).reverse();
+  const proofs = (await getPendingProofs(env)).slice(-10).reverse();
   if (!proofs.length) {
     await sendMessage(env, chatId, "درخواست اثبات در انتظار بررسی نداریم.", keyboard(ADMIN_MENU));
     return;
@@ -1731,7 +1750,11 @@ async function listPendingProofs(env, chatId) {
   for (const proof of proofs) {
     const profile = await getProfile(env, proof.userId);
     lines.push(`${formatDateTime(proof.createdAt)} | ${profile?.name || proof.firstName || "-"} | ${proof.username ? `@${proof.username}` : proof.userId}`);
-    rows.push([{ text: `باز کردن ${profile?.name || proof.firstName || proof.id}`, callback_data: `proof:view:${proof.id}` }]);
+    rows.push([{ text: `👁 مشاهده ${profile?.name || proof.firstName || proof.id}`, callback_data: `proof:view:${proof.id}` }]);
+    rows.push([
+      { text: `✅ تایید ${profile?.name || proof.firstName || proof.id}`, callback_data: `proof:approve:${proof.id}` },
+      { text: `❌ رد`, callback_data: `proof:reject:${proof.id}` }
+    ]);
   }
 
   await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
@@ -1872,7 +1895,7 @@ async function exportComprehensive(env, chatId) {
   const releases = await getList(env, "release_requests");
   const posts = await getList(env, "posts");
   const tests = await getList(env, "test_results");
-  const proofs = await getList(env, "proofs");
+  const proofs = await getProofs(env);
 
   const rows = [
     ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_percent", "booking_count", "release_count", "post_count", "proof_statuses"],
@@ -2024,6 +2047,24 @@ async function getProfiles(env) {
     if (latest?.registered) byUser.set(latest.userId, latest);
   }
   return [...byUser.values()];
+}
+
+async function getProofs(env) {
+  const refs = await getList(env, "proofs");
+  const byId = new Map();
+  for (const ref of refs) {
+    const latest = await getJson(env, `proof:${ref.id}`);
+    if (latest) byId.set(latest.id, latest);
+  }
+  return [...byId.values()];
+}
+
+async function getPendingProofs(env) {
+  return (await getProofs(env)).filter((proof) => proof.status === "pending");
+}
+
+async function getPendingProofForUser(env, userId) {
+  return (await getPendingProofs(env)).find((proof) => String(proof.userId) === String(userId));
 }
 
 async function ensureRegistered(env, chatId, userId) {
