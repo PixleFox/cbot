@@ -6,7 +6,7 @@ const MAX_PHOTO_CAPTION_LENGTH = 900;
 const MAX_VIDEO_CAPTION_LENGTH = 900;
 const POST_COOLDOWN_SECONDS = 90;
 const BOOKING_COOLDOWN_SECONDS = 60;
-const TEST_COOLDOWN_SECONDS = 20;
+const TEST_COOLDOWN_SECONDS = 60;
 const REMINDER_WINDOW_MINUTES = 30;
 
 const QUESTIONS = [
@@ -1710,7 +1710,7 @@ async function handleAdminCallback(env, query, data) {
     await sendMessage(
       env,
       chatId,
-      "➕ زمان مشاوره را دقیق وارد کن.\n\nفرمت پیشنهادی:\n2026-07-22 20:30\n\nساعت بر اساس تهران ذخیره می‌شود.\nلغو: /cancel"
+      "➕ زمان مشاوره را وارد کن.\n\nمثال:\nامروز ۲۰:۰۰\nفردا ۰۴:۰۰\nیکشنبه ۰۳:۰۰\n2026-07-22 20:30\n\nساعت بر اساس تهران ذخیره می‌شود.\nلغو: /cancel"
     );
     return;
   }
@@ -1720,7 +1720,7 @@ async function handleAdminCallback(env, query, data) {
     await sendMessage(
       env,
       chatId,
-      "💧 زمان تخلیه آب بیغیرتی را وارد کن.\n\nفرمت:\n2026-07-22 20:30\n\nلغو: /cancel"
+      "💧 زمان تخلیه آب بیغیرتی را وارد کن.\n\nمثال:\nامروز ۲۰:۰۰\nفردا ۰۴:۰۰\nیکشنبه ۰۳:۰۰\n2026-07-22 20:30\n\nلغو: /cancel"
     );
     return;
   }
@@ -1815,7 +1815,7 @@ async function finishAddSlot(env, message, text) {
   const slotLabel = cleanText(text);
   const startsAt = parseTehranDateTime(slotLabel);
   if (!startsAt) {
-    await sendMessage(env, chatId, "❌ زمان را با فرمت دقیق بفرست:\n\n2026-07-22 20:30");
+    await sendMessage(env, chatId, "❌ زمان را اینطوری بفرست:\n\nامروز ۲۰:۰۰\nفردا ۰۴:۰۰\nیکشنبه ۰۳:۰۰\n2026-07-22 20:30");
     return;
   }
 
@@ -1842,7 +1842,7 @@ async function finishAddReleaseSlot(env, message, text) {
   const slotLabel = cleanText(text);
   const startsAt = parseTehranDateTime(slotLabel);
   if (!startsAt) {
-    await sendMessage(env, chatId, "❌ زمان را با فرمت دقیق بفرست:\n\n2026-07-22 20:30");
+    await sendMessage(env, chatId, "❌ زمان را اینطوری بفرست:\n\nامروز ۲۰:۰۰\nفردا ۰۴:۰۰\nیکشنبه ۰۳:۰۰\n2026-07-22 20:30");
     return;
   }
 
@@ -2368,20 +2368,82 @@ function countUrls(value) {
 }
 
 function parseTehranDateTime(value) {
-  const match = cleanText(value).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
-  if (!match) return "";
+  const text = normalizeDigits(cleanText(value).replace(/،/g, " "));
+  const absolute = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})$/);
+  if (absolute) {
+    return makeTehranIso(Number(absolute[1]), Number(absolute[2]), Number(absolute[3]), Number(absolute[4]), Number(absolute[5]));
+  }
 
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
+  const relative = text.match(/^(امروز|فردا|شنبه|یکشنبه|يكشنبه|دوشنبه|سه شنبه|سه‌شنبه|چهارشنبه|پنجشنبه|جمعه)\s+(\d{1,2}):(\d{2})$/);
+  if (!relative) return "";
+
+  const dayWord = relative[1].replace("يك", "یک");
+  const hour = Number(relative[2]);
+  const minute = Number(relative[3]);
+  if (hour > 23 || minute > 59) return "";
+
+  const nowTehran = getTehranParts(new Date());
+  let offsetDays = 0;
+  if (dayWord === "فردا") {
+    offsetDays = 1;
+  } else if (dayWord !== "امروز") {
+    const targetDay = PERSIAN_WEEKDAYS[dayWord];
+    if (targetDay === undefined) return "";
+    offsetDays = (targetDay - nowTehran.weekday + 7) % 7;
+    if (offsetDays === 0) offsetDays = 7;
+  }
+
+  const baseUtc = Date.UTC(nowTehran.year, nowTehran.month - 1, nowTehran.day + offsetDays, hour - 3, minute - 30, 0);
+  const startsAt = new Date(baseUtc).toISOString();
+  if (Date.parse(startsAt) <= Date.now()) return "";
+  return startsAt;
+}
+
+const PERSIAN_WEEKDAYS = {
+  "شنبه": 6,
+  "یکشنبه": 0,
+  "دوشنبه": 1,
+  "سه شنبه": 2,
+  "سه‌شنبه": 2,
+  "چهارشنبه": 3,
+  "پنجشنبه": 4,
+  "جمعه": 5
+};
+
+function normalizeDigits(value) {
+  const persian = "۰۱۲۳۴۵۶۷۸۹";
+  const arabic = "٠١٢٣٤٥٦٧٨٩";
+  return String(value).replace(/[۰-۹٠-٩]/g, (digit) => {
+    const persianIndex = persian.indexOf(digit);
+    if (persianIndex >= 0) return String(persianIndex);
+    return String(arabic.indexOf(digit));
+  });
+}
+
+function makeTehranIso(year, month, day, hour, minute) {
   if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return "";
-
   const utcMs = Date.UTC(year, month - 1, day, hour - 3, minute - 30, 0);
   const startsAt = new Date(utcMs).toISOString();
   if (Date.parse(startsAt) <= Date.now()) return "";
   return startsAt;
+}
+
+function getTehranParts(date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tehran",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    weekday: weekdayMap[map.weekday]
+  };
 }
 
 function formatTehranSlot(startsAt) {
