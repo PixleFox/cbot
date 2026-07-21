@@ -1,6 +1,6 @@
 const CHANNEL_USERNAME = "@cucksclub";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
-const QUESTION_COUNT = 10;
+const QUESTION_COUNT = 18;
 const MAX_TEXT_LENGTH = 2800;
 const MAX_PHOTO_CAPTION_LENGTH = 900;
 const MAX_VIDEO_CAPTION_LENGTH = 900;
@@ -11,95 +11,216 @@ const REMINDER_WINDOW_MINUTES = 30;
 
 const QUESTIONS = [
   {
-    text: "وقتی شریک عاطفی/جنسی‌تان مورد توجه فرد دیگری قرار می‌گیرد، واکنش غالب شما چیست؟",
+    id: "g1",
+    section: "general",
+    text: "کدام گزینه در مورد شما درست است؟",
     options: [
-      { label: "کاملا ناراحت یا مضطرب می‌شوم", score: 0 },
-      { label: "کمی حسادت می‌کنم اما قابل مدیریت است", score: 1 },
-      { label: "کنجکاو یا تحریک ذهنی می‌شوم", score: 2 },
-      { label: "برایم جذاب و برانگیزاننده است", score: 3 }
+      { label: "هفته‌ای یک بار خودارضایی می‌کنم.", score: 3 },
+      { label: "تقریباً هر روز خودارضایی می‌کنم.", score: 1 },
+      { label: "هفته‌ای ۳ بار یا بیشتر خودارضایی می‌کنم.", score: 2 },
+      { label: "خیلی کم یا اصلاً خودارضایی نمی‌کنم.", score: 4 }
     ]
   },
   {
-    text: "فکر کردن به سناریوهای رضایتمندانه و توافقی با حضور فرد سوم برای شما چقدر جذاب است؟",
+    id: "g2",
+    section: "general",
+    text: "کدام گزینه در مورد شما درست است؟",
     options: [
-      { label: "اصلا جذاب نیست", score: 0 },
-      { label: "به ندرت جذاب است", score: 1 },
-      { label: "گاهی جذاب است", score: 2 },
-      { label: "خیلی جذاب است", score: 3 }
+      { label: "پورن زیاد نگاه می‌کنم و تقریباً فکر می‌کنم به پورن اعتیاد دارم.", score: 1 },
+      { label: "اهل پورن دیدن هستم ولی فقط گاهی اوقات می‌بینم.", score: 2 },
+      { label: "خیلی پورن کم نگاه می‌کنم.", score: 3 },
+      { label: "از پورن بدم میاد و نگاه نمی‌کنم.", score: 4 }
     ]
   },
   {
-    text: "در رابطه، دانستن جزئیات توجه یا ارتباط شریک‌تان با فرد دیگر چه حسی ایجاد می‌کند؟",
+    id: "g3",
+    section: "general",
+    text: "در هنگام رابطه جنسی به نظرتان چه چیزی بیشتر از همه لذت‌بخش است؟",
     options: [
-      { label: "ترجیح می‌دهم ندانم", score: 0 },
-      { label: "بسته به شرایط شاید بدانم", score: 1 },
-      { label: "تا حدی کنجکاوم", score: 2 },
-      { label: "دانستن جزئیات برایم مهم و جذاب است", score: 3 }
+      { label: "لذت بردن طرف مقابل از کارهایی که می‌کنم.", score: 1 },
+      { label: "اینکه هر دو در هم آمیخته می‌شویم و عشق و علاقه را تحکیم می‌کنیم.", score: 2 },
+      { label: "فارغ از عشق و علاقه، لذت فیزیکی که ایجاد می‌شود فوق‌العاده است.", score: 3 },
+      { label: "اینکه روی طرف مقابل تسلط دارم و دارم ازش لذت می‌برم.", score: 4 }
     ]
   },
   {
-    text: "اگر همه افراد بالغ، آگاه و رضایتمند باشند، نقش تماشاگر یا شنونده بودن برای شما چقدر قابل تصور است؟",
+    id: "g4",
+    section: "general",
+    text: "کدام مورد در خصوص شما صدق می‌کند؟",
     options: [
-      { label: "قابل تصور نیست", score: 0 },
-      { label: "خیلی کم", score: 1 },
-      { label: "تا حدی", score: 2 },
-      { label: "کاملا قابل تصور است", score: 3 }
+      { label: "حس می‌کنم توان جنسی من نسبت به بقیه کمتر است با این که شهوتم زیاد است.", score: 1 },
+      { label: "توان جنسی من بالاست ولی از لحاظ فیزیکی چندان خود را قوی نمی‌بینم.", score: 2 },
+      { label: "توان جنسی و فیزیکی متوسطی دارم.", score: 3 },
+      { label: "فکر می‌کنم از اکثر مردها بهتر هستم از نظر توان جنسی و فیزیکی.", score: 4 }
     ]
   },
   {
-    text: "در چنین سناریوهایی، مرزگذاری و توافق قبلی برای شما چقدر ضروری است؟",
+    id: "g5",
+    section: "general",
+    text: "کدام مورد در خصوص شما صدق می‌کند؟",
     options: [
-      { label: "چندان مهم نیست", score: 0 },
-      { label: "تا حدی مهم است", score: 1 },
-      { label: "مهم است", score: 2 },
-      { label: "کاملا ضروری است", score: 3 }
+      { label: "همواره در زندگی در موضع ضعف بوده‌ام و دیگران به من زور می‌گویند.", score: 1 },
+      { label: "اکثر اوقات نمی‌توانم حقم را ثابت کنم.", score: 2 },
+      { label: "معمولاً از پس خودم برمی‌آیم و حقم را نمی‌گذارم کسی پایمال کند.", score: 3 },
+      { label: "من حق بقیه را هم می‌خورم معمولاً.", score: 4 }
     ]
   },
   {
-    text: "اگر شریک‌تان بدون اطلاع شما با فرد دیگری وارد رابطه شود، آن را چطور می‌بینید؟",
+    id: "g6",
+    section: "general",
+    text: "در جمع‌های دوستانه یا فامیلی، وقتی صحبت از خیانت یا بی‌وفایی می‌شود، اولین حس درونی شما چیست؟",
     options: [
-      { label: "خیانت و غیرقابل قبول", score: 3 },
-      { label: "بسیار آزاردهنده", score: 2 },
-      { label: "بستگی به شرایط دارد", score: 1 },
-      { label: "مشکل خاصی ندارد", score: 0 }
+      { label: "هم حس ترس دارم هم هیجان؛ اگر برای خودم اتفاق بیفتد نابود می‌شوم ولی ته دلم تحریک‌کننده است.", score: 1 },
+      { label: "برایم جذاب است، دوست دارم بیشتر در موردش بشنوم و سناریوهای مختلف را تصور کنم.", score: 2 },
+      { label: "موضوعی معمولی است، برای هر کسی ممکن است پیش بیاید.", score: 3 },
+      { label: "از این صحبت‌ها بدم میاد، به من چه ربطی داره.", score: 4 }
     ]
   },
   {
-    text: "تفاوت بین فانتزی و اجرای واقعی برای شما چقدر روشن است؟",
+    id: "g7",
+    section: "general",
+    text: "اگر فردی غریبه در شبکه‌های اجتماعی از پارتنر یا همسر شما تعریف کند، چه واکنشی دارید؟",
     options: [
-      { label: "روشن نیست", score: 0 },
-      { label: "گاهی قاطی می‌شود", score: 1 },
-      { label: "نسبتا روشن است", score: 2 },
-      { label: "کاملا روشن است", score: 3 }
+      { label: "تشویقش می‌کنم بیشتر تعریف کند و لذت می‌برم.", score: 1 },
+      { label: "بد نیست، حس افتخار بهم دست می‌دهد.", score: 2 },
+      { label: "بی‌تفاوت می‌مانم، حوصله جواب دادن ندارم.", score: 3 },
+      { label: "سریع بلاک می‌کنم و به پارتنرم هم می‌گویم مواظب باشد.", score: 4 }
     ]
   },
   {
-    text: "اگر اجرای یک فانتزی باعث آسیب روانی شریک‌تان شود، چه می‌کنید؟",
+    id: "g8",
+    section: "general",
+    text: "کدام توصیف به شخصیت جنسی شما نزدیک‌تر است؟",
     options: [
-      { label: "ادامه می‌دهم چون خواسته من مهم است", score: 0 },
-      { label: "شاید توقف کنم", score: 1 },
-      { label: "توقف و گفتگو می‌کنم", score: 2 },
-      { label: "کاملا متوقف می‌کنم و مرزها را بازبینی می‌کنم", score: 3 }
+      { label: "همیشه ته دلم می‌خواهم یک مرد قوی‌تر و مسلط‌تر بیاید و کنترل را از من بگیرد.", score: 1 },
+      { label: "گاهی دلم می‌خواهد کسی مرا تحقیر کند یا ناتوانی‌ام را به رخم بکشد.", score: 2 },
+      { label: "حالم با خودم هم خوب است، نه به دنبال تحقیرم نه تحقیر کردن کسی.", score: 3 },
+      { label: "تحقیر شدن یا ضعیف دیده شدن برایم مثل کابوس است و تحملش را ندارم.", score: 4 }
     ]
   },
   {
-    text: "برای صحبت درباره این فانتزی با شریک، کدام روش به شما نزدیک‌تر است؟",
+    id: "r1",
+    section: "relationship",
+    text: "کدام گزینه در مورد شما صدق می‌کند؟",
     options: [
-      { label: "اصلا صحبت نمی‌کنم", score: 0 },
-      { label: "غیرمستقیم اشاره می‌کنم", score: 1 },
-      { label: "با احتیاط و احترام مطرح می‌کنم", score: 2 },
-      { label: "شفاف، توافقی و با حق نه گفتن مطرح می‌کنم", score: 3 }
+      { label: "پارتنرم معمولاً خیلی آزادانه لباس می‌پوشد و این خیلی برایم لذت‌بخش است.", score: 1 },
+      { label: "پارتنرم آزادانه لباس نمی‌پوشد علی‌رغم اصرار من.", score: 2 },
+      { label: "پارتنرم معمولاً آزادانه لباس می‌پوشد و من با این موضوع مشکل جدی دارم.", score: 3 },
+      { label: "پارتنرم اینطوری که من می‌خوام لباس می‌پوشد.", score: 4 }
     ]
   },
   {
-    text: "این فانتزی در زندگی روزمره شما چقدر کنترل‌پذیر است؟",
+    id: "r2",
+    section: "relationship",
+    text: "کدام گزینه در مورد شما صدق می‌کند؟",
     options: [
-      { label: "کنترلش سخت است", score: 0 },
-      { label: "گاهی مزاحم تمرکز یا رابطه‌ام می‌شود", score: 1 },
-      { label: "معمولا کنترل‌پذیر است", score: 2 },
-      { label: "کاملا کنترل‌پذیر و بدون اختلال است", score: 3 }
+      { label: "پارتنرم قبل از اینکه با من باشد با افراد متعددی بوده و این خیلی برایم تحریک‌آمیز است.", score: 1 },
+      { label: "پارتنرم با افراد زیادی قبل از من نبوده ولی کاش بود.", score: 2 },
+      { label: "پارتنرم با افرادی قبل از من بوده ولی در موردش کنجکاو نیستم.", score: 3 },
+      { label: "پارتنرم با آدم‌های زیادی نبوده و ترجیح می‌دهم در موردش ندانم.", score: 4 }
+    ]
+  },
+  {
+    id: "r3",
+    section: "relationship",
+    text: "پارتنر شما در یک مهمانی لباس خاصی پوشیده که خیلی جذاب به نظر می‌رسد. کدام گزینه در مورد شما صدق می‌کند؟",
+    options: [
+      { label: "ای کاش نظر بقیه به او جلب شود تا به اوج برسم.", score: 1 },
+      { label: "جذابیت او جذابیت من است، باعث افتخاره.", score: 2 },
+      { label: "خیلی در مورد این موضوع کنجکاوی ندارم، هر اتفاقی بیفتد اوکی هست.", score: 3 },
+      { label: "هر نگاهی که به او می‌شود مایه عذاب من است.", score: 4 }
+    ]
+  },
+  {
+    id: "r4",
+    section: "relationship",
+    text: "به صورت غیرمنتظره پارتنر خودتان را با مرد دیگری داخل ماشین می‌بینید. دوست دارید چه اتفاقی بیفتد؟",
+    options: [
+      { label: "کاش صمیمیت بیشتری بین‌شان شکل بگیرد و ادامه‌دار شود.", score: 1 },
+      { label: "اگر در حد بوسه باشد اوکی هست و به رویش نمی‌آورم.", score: 2 },
+      { label: "خیلی در مورد این موضوع کنجکاوی ندارم، هر اتفاقی بیفتد اوکی هست.", score: 3 },
+      { label: "بهتر است با یک دست دادن و خداحافظی ساده تمام شود.", score: 4 }
+    ]
+  },
+  {
+    id: "r5",
+    section: "relationship",
+    text: "پارتنر شما ساعت ۹ شب پیامی می‌دهد که امشب پیش دوستش می‌ماند. کدام اقدام را می‌کنید؟",
+    options: [
+      { label: "با فکر به اینکه شاید با فرد دیگری است ذهنم شدیداً درگیر و تحریک می‌شود.", score: 1 },
+      { label: "پرس‌وجو می‌کنم تا بفهمم دروغ می‌گوید یا راست؛ اگر راست بگوید اوکی هست.", score: 2 },
+      { label: "خیلی در مورد این موضوع کنجکاوی ندارم، هر اتفاقی بیفتد اوکی هست.", score: 3 },
+      { label: "اگر بفهمم دروغ می‌گوید همه چیز تمام است.", score: 4 }
+    ]
+  },
+  {
+    id: "r6",
+    section: "relationship",
+    text: "پارتنر شما چت یا پیامکی با همکار جذابش دارد که شما می‌بینیدش. اولین فکرتان چیست؟",
+    options: [
+      { label: "ته دلم ذوق می‌کنم، شاید بالاخره یک اتفاق بیفتد و من شاهدش باشم.", score: 1 },
+      { label: "ناراحت نمی‌شوم، ولی کنجکاوم ببینم تا کجا پیش می‌رود.", score: 2 },
+      { label: "پیگیر می‌شوم ببینم چقدر جدی است، اگر شوخی باشد اشکال ندارد.", score: 3 },
+      { label: "بلافاصله گوشی را برمی‌دارم و توضیح می‌خواهم.", score: 4 }
+    ]
+  },
+  {
+    id: "r7",
+    section: "relationship",
+    text: "اگر پارتنرت به شما بگوید یکی از همکارانم خیلی شبیه تو حساس و باهوش است و رابطه‌مان نزدیک شده، چه حسی می‌گیرید؟",
+    options: [
+      { label: "ته دلم می‌خواهم بگویم بیارش خانه، ببینم چقدر شبیه من است.", score: 1 },
+      { label: "حسودی و نگرانی خفیفی می‌گیرم ولی در کل جذاب است.", score: 2 },
+      { label: "می‌گویم خب، دوست خوبی پیدا کردی، تبریک.", score: 3 },
+      { label: "از کوره در می‌روم، این توهین است.", score: 4 }
+    ]
+  },
+  {
+    id: "r8",
+    section: "relationship",
+    text: "اگر پارتنرتان با شخصی که از نظر شما جذاب‌تر و قوی‌تر است بیرون برود، در نبودش چه می‌کنید؟",
+    options: [
+      { label: "تصورش می‌کنم و ذهنم شدیداً درگیر سناریوهای مختلف می‌شود.", score: 1 },
+      { label: "کمی استرس دارم ولی ذهنم درگیر سناریوهای مختلف می‌شود.", score: 2 },
+      { label: "کار خودم را می‌کنم، اتفاق خاصی نمی‌افتد.", score: 3 },
+      { label: "مدام زنگ می‌زنم، پیام می‌دهم تا زود برگردد.", score: 4 }
+    ]
+  },
+  {
+    id: "r9",
+    section: "relationship",
+    text: "یک شب پارتنرتان مست یا خیلی خسته می‌آید و در خواب اسم کس دیگری را می‌آورد. واکنش شما چیست؟",
+    options: [
+      { label: "خودم را می‌زنم به خواب، صبح هم به روش نمیارم چون ته دلم کیف داد.", score: 1 },
+      { label: "صبح شوخی می‌کنم و اسمشو می‌پرسم، جذاب بود.", score: 2 },
+      { label: "شاید خواب دیده، مهم نیست.", score: 3 },
+      { label: "بیدارش می‌کنم، دعوا راه می‌اندازم، بی‌احترامی است.", score: 4 }
+    ]
+  },
+  {
+    id: "r10",
+    section: "relationship",
+    text: "به شما پیشنهاد شود که به مدت یک هفته پارتنرتان را با یک مرد مسلط و مجرب تنها بگذارید، در ازای آن پول خوبی هم بگیرید.",
+    options: [
+      { label: "حتی بی‌پول هم قبول می‌کنم، فقط دانستن جزئیات کافی است.", score: 1 },
+      { label: "پولش خوب باشد چرا که نه، ولی دوست دارم جزئیات را بدانم.", score: 2 },
+      { label: "وسوسه‌انگیز است ولی احتمالاً قبول نمی‌کنم.", score: 3 },
+      { label: "هرگز، ناموسم را نمی‌فروشم.", score: 4 }
     ]
   }
+];
+
+const TEST_TYPES = [
+  { min: 0, max: 10, title: "سوپر کاکولد", summary: "در انتهای طیف کاکولدی قرار داری و لذت جنسی‌ات شدیداً به سناریوهای واگذاری و تماشای پارتنر گره می‌خورد.", advice: "این نتیجه فقط برای خودشناسی است. اگر چنین فانتزی‌هایی پررنگ‌اند، مرزهای روانی، رابطه‌ای و حریم خصوصی را جدی نگه دار." },
+  { min: 10, max: 20, title: "کاکولد واقعی", summary: "کاکولدی برایت فقط یک کنجکاوی ساده نیست و بخش مهمی از سبک فانتزی و رابطه‌ات را شکل می‌دهد.", advice: "با خودت صادق باش و مراقب باش نقش‌ها و فانتزی‌ها به تخریب عزت‌نفس یا رابطه تبدیل نشوند." },
+  { min: 20, max: 30, title: "کاکولد", summary: "فانتزی کاکولدی را تا حد زیادی پذیرفته‌ای، اما هنوز می‌توانی بین خیال، تجربه و مرزهای رابطه تفاوت بگذاری.", advice: "قبل از هر تصمیم واقعی، مرزها، پیامدها و حس بعد از تجربه را جدی بررسی کن." },
+  { min: 30, max: 40, title: "کاکولد بلا تکلیف", summary: "فانتزی کاکولدی روشن است، اما بین هیجان ذهنی و تردید واقعی گیر کرده‌ای.", advice: "عجله نکن. اول بفهم این میل چه زمانی فعال می‌شود و چقدر به هیجان لحظه‌ای وابسته است." },
+  { min: 40, max: 50, title: "بلا تکلیف", summary: "گاهی از فکر بی‌وفایی یا واگذاری تحریک می‌شوی و گاهی همان فکر مضطربت می‌کند.", advice: "لازم نیست فوراً برچسبی روی خودت بزنی. هدف آزمون فقط شناخت این تناقض‌هاست." },
+  { min: 50, max: 60, title: "بی‌تفاوت", summary: "نه کاکولدی برایت جذابیت جدی دارد و نه غیرت شدید محور اصلی واکنش‌هایت است.", advice: "مرزهای خودت و طرف مقابل را روشن نگه دار، چون بی‌تفاوتی تو ممکن است برای دیگری معنای متفاوتی داشته باشد." },
+  { min: 60, max: 70, title: "نمیچه کاکولد", summary: "کاکولد نیستی، اما ممکن است ترس از دست دادن یا ناامنی عاطفی در واکنش‌هایت دیده شود.", advice: "روی اعتمادبه‌نفس و گفتگوی سالم درباره امنیت عاطفی کار کن." },
+  { min: 70, max: 80, title: "مرد زندگی (آلفا)", summary: "غیرتت نسبتاً سالم و متعادل است؛ هم مرز داری، هم کنترل افراطی نداری.", advice: "این تعادل را حفظ کن و اجازه نده فشار فرهنگی تو را به افراط یا تفریط ببرد." },
+  { min: 80, max: 90, title: "بول", summary: "اعتمادبه‌نفس جنسی و حس مالکیت بالایی داری و تقسیم شریک عاطفی برایت قابل قبول نیست.", advice: "قدرت و مرزبندی خوب است، اما مراقب باش به کنترل‌گری یا خشونت کلامی تبدیل نشود." },
+  { min: 90, max: 100.01, title: "سوپر بول", summary: "تحمل خیانت یا بی‌احترامی برایت بسیار پایین است و در طیف غیرت بسیار بالا قرار می‌گیری.", advice: "شدت واکنش‌هایت را مدیریت کن تا غیرت به فشار، کنترل یا آسیب رابطه تبدیل نشود." }
 ];
 
 const MAIN_MENU = [
@@ -969,24 +1090,28 @@ async function startTest(env, chatId, userId) {
     return;
   }
 
-  await setState(env, userId, { mode: "test", index: 0, scores: [] });
+  const profile = await getProfile(env, userId);
+  const questionIds = getTestQuestions(profile).map((question) => question.id);
+  await setState(env, userId, { mode: "test", index: 0, scores: [], answers: [], questionIds });
   await sendMessage(
     env,
     chatId,
     [
       "🧪 تست غیرت",
       "",
-      "این آزمون صرفاً خودسنجی و غیرتشخیصی است.",
-      "برای روابط بالغ، آگاهانه و رضایتمندانه طراحی شده.",
+      "این آزمون صرفاً برای خودشناسی است و ملاک قطعی یا تشخیص محسوب نمی‌شود.",
+      profile?.marital === "single" ? "برای شما فقط ۸ سوال عمومی نمایش داده می‌شود." : "برای شما ۸ سوال عمومی + ۱۰ سوال رابطه نمایش داده می‌شود.",
       "",
       "برای توقف: /cancel"
     ].join("\n")
   );
-  await sendQuestion(env, chatId, 0);
+  await sendQuestion(env, chatId, { index: 0, questionIds });
 }
 
-async function sendQuestion(env, chatId, index) {
-  const q = QUESTIONS[index];
+async function sendQuestion(env, chatId, state) {
+  const index = state.index;
+  state.questionIds = state.questionIds || QUESTIONS.map((question) => question.id);
+  const q = getQuestionById(state.questionIds[index]);
   const rows = q.options.map((option, optionIndex) => [
     { text: `${optionIndex + 1}️⃣ ${option.label}`, callback_data: `test:${index}:${optionIndex}` }
   ]);
@@ -994,7 +1119,7 @@ async function sendQuestion(env, chatId, index) {
   await sendMessage(
     env,
     chatId,
-    [`🔘 سوال ${index + 1}/${QUESTION_COUNT}`, "", q.text].join("\n"),
+    [`🔘 سوال ${index + 1}/${state.questionIds.length}`, "", q.text].join("\n"),
     keyboard(rows)
   );
 }
@@ -1007,55 +1132,73 @@ async function handleTestCallback(query, env, state, index, optionIndex) {
     await sendMessage(env, chatId, "برای شروع آزمون از منو استفاده کن.", keyboard(await getMainMenuForUser(env, userId)));
     return;
   }
+  state.questionIds = state.questionIds || QUESTIONS.map((question) => question.id);
 
-  if (state.index !== index || !QUESTIONS[index]?.options[optionIndex]) {
+  const question = getQuestionById(state.questionIds?.[index]);
+  if (state.index !== index || !question?.options[optionIndex]) {
     await sendMessage(env, chatId, "این پاسخ با سوال فعلی هماهنگ نیست.");
     return;
   }
 
-  const option = QUESTIONS[index].options[optionIndex];
+  const option = question.options[optionIndex];
   const nextState = {
     mode: "test",
     index: index + 1,
-    scores: [...state.scores, option.score]
+    questionIds: state.questionIds,
+    scores: [...state.scores, option.score],
+    answers: [...(state.answers || []), { questionId: question.id, optionIndex, score: option.score }]
   };
 
-  if (nextState.index >= QUESTION_COUNT) {
+  if (nextState.index >= state.questionIds.length) {
     await finishTest(env, chatId, userId, nextState);
     return;
   }
 
   await setState(env, userId, nextState);
-  await sendQuestion(env, chatId, nextState.index);
+  await sendQuestion(env, chatId, nextState);
 }
 
 async function finishTest(env, chatId, userId, state) {
   const total = state.scores.reduce((sum, value) => sum + value, 0);
-  const max = QUESTION_COUNT * 3;
-  const percent = Math.round((total / max) * 100);
+  const questionCount = state.questionIds.length;
+  const min = questionCount;
+  const max = questionCount * 4;
+  const percent = Math.round(((total - min) / (max - min)) * 100);
+  const result = getTestType(percent);
 
-  let title = "🟢 گرایش پایین یا نامشخص";
-  let note = "این فانتزی برایت محوریت زیادی ندارد یا هنوز روشن نیست.";
-  if (percent >= 35 && percent < 65) {
-    title = "🟡 گرایش متوسط";
-    note = "کنجکاوی یا فانتزی وجود دارد؛ مرزها، رضایت و تفاوت فانتزی با اجرا باید جدی گرفته شود.";
-  }
-  if (percent >= 65) {
-    title = "🔴 گرایش بالا";
-    note = "این فانتزی پررنگ‌تر است؛ هر تصمیم واقعی فقط با رضایت کامل، مرزبندی روشن و حق توقف معنا دارد.";
-  }
-
-  await putListItem(env, "test_results", {
+  const testResult = {
+    id: shortId(),
     userId,
+    questionCount,
     total,
+    min,
+    max,
     percent,
+    type: result.title,
+    answers: state.answers || [],
     createdAt: new Date().toISOString()
-  });
+  };
+
+  await env.BOT_KV.put(`test:${testResult.id}`, JSON.stringify(testResult));
+  await putListItem(env, "test_results", testResult);
   await clearState(env, userId);
   await sendMessage(
     env,
     chatId,
-    [`📊 نتیجه آزمون`, "", `امتیاز: ${total}/${max}`, `درصد: ${percent}%`, `سطح: ${title}`, "", note, "", "این نتیجه تشخیص روان‌شناختی نیست."].join("\n"),
+    [
+      `📊 نتیجه تست غیرت`,
+      "",
+      `نمره خام: ${total}`,
+      `بازه نمره: ${min} تا ${max}`,
+      `درصد طیف: ${percent}%`,
+      `تیپ: ${result.title}`,
+      "",
+      result.summary,
+      "",
+      `توصیه: ${result.advice}`,
+      "",
+      "این آزمون صرفاً برای خودشناسی است و ملاک قطعی محسوب نمی‌شود."
+    ].join("\n"),
     keyboard(await getMainMenuForUser(env, userId))
   );
 }
@@ -1898,7 +2041,7 @@ async function exportComprehensive(env, chatId) {
   const proofs = await getProofs(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_percent", "booking_count", "release_count", "post_count", "proof_statuses"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "proof_statuses"],
     ...profiles.map((profile) => {
       const userTests = tests.filter((item) => item.userId === profile.userId);
       const lastTest = userTests[userTests.length - 1];
@@ -1914,7 +2057,13 @@ async function exportComprehensive(env, chatId) {
         profile.cuckoldVerified ? "yes" : "no",
         profile.createdAt,
         userTests.length,
+        lastTest?.total ?? "",
+        lastTest?.min ?? "",
+        lastTest?.max ?? "",
         lastTest?.percent ?? "",
+        lastTest?.type ?? "",
+        lastTest?.questionCount ?? "",
+        lastTest?.createdAt ?? "",
         bookings.filter((item) => item.userId === profile.userId).length,
         releases.filter((item) => item.userId === profile.userId).length,
         posts.filter((item) => item.userId === profile.userId).length,
@@ -1948,6 +2097,19 @@ function postTypeLabel(kind) {
   if (kind === "video") return "فیلم";
   if (kind === "confession") return "اعترافات";
   return kind;
+}
+
+function getTestQuestions(profile) {
+  const includeRelationship = ["married", "relationship"].includes(profile?.marital);
+  return QUESTIONS.filter((question) => question.section === "general" || (includeRelationship && question.section === "relationship"));
+}
+
+function getQuestionById(questionId) {
+  return QUESTIONS.find((question) => question.id === questionId);
+}
+
+function getTestType(percent) {
+  return TEST_TYPES.find((type) => percent >= type.min && percent < type.max) || TEST_TYPES[TEST_TYPES.length - 1];
 }
 
 function validateName(value) {
