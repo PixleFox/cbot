@@ -1,6 +1,7 @@
 const CHANNEL_USERNAME = "@cucksclub";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
+const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-collage.png";
 const QUESTION_COUNT = 18;
 const MAX_TEXT_LENGTH = 2800;
 const MAX_PHOTO_CAPTION_LENGTH = 900;
@@ -345,15 +346,26 @@ const TEST_TYPES = [
 ];
 
 const MAIN_MENU = [
-  [{ text: "🧪 تست غیرت", callback_data: "menu:test" }],
-  [{ text: "📅 نوبت مشاوره", callback_data: "menu:booking" }],
-  [{ text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" }],
-  [{ text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }],
-  [{ text: "🔁 عضویت در گروه تبادل عکس و فیلم", callback_data: "exchange:join" }],
-  [{ text: "🔞 عضویت در گروه VIP کاکولدی", callback_data: "vip:join" }],
-  [{ text: "💧 تخلیه آب بیغیرتی", callback_data: "release:start" }],
-  [{ text: "🎭 ساخت عکس و فیلم با چهره دلخواه", callback_data: "face:create" }],
-  [{ text: "🆘 پشتیبانی", callback_data: "support:start" }],
+  [
+    { text: "🧪 تست غیرت", callback_data: "menu:test" },
+    { text: "📅 نوبت مشاوره", callback_data: "menu:booking" }
+  ],
+  [
+    { text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" },
+    { text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }
+  ],
+  [
+    { text: "📸 راهنمای ارسال عکس", callback_data: "guide:photo" },
+    { text: "🔁 گروه تبادل", callback_data: "exchange:join" }
+  ],
+  [
+    { text: "🔞 گروه VIP", callback_data: "vip:join" },
+    { text: "💧 تخلیه بیغیرتی", callback_data: "release:start" }
+  ],
+  [
+    { text: "🎭 ساخت با چهره دلخواه", callback_data: "face:create" },
+    { text: "🆘 پشتیبانی", callback_data: "support:start" }
+  ],
   [{ text: "ℹ️ راهنما", callback_data: "menu:help" }]
 ];
 
@@ -391,22 +403,35 @@ const USER_TYPE_LABELS = {
 };
 
 const POST_TYPE_MENU = [
-  [{ text: "🎬 ارسال عکس و فیلم در کانال", callback_data: "post:type:media" }],
-  [{ text: "✍️ ارسال اعترافات در کانال", callback_data: "post:type:confession" }],
+  [
+    { text: "🎬 عکس و فیلم", callback_data: "post:type:media" },
+    { text: "✍️ اعترافات", callback_data: "post:type:confession" }
+  ],
+  [{ text: "📸 راهنمای ارسال عکس", callback_data: "guide:photo" }],
   [{ text: "↩️ برگشت", callback_data: "menu:help" }]
 ];
 
 const ADMIN_MENU = [
-  [{ text: "➕ افزودن زمان مشاوره", callback_data: "admin:add_slot" }],
-  [{ text: "💧 افزودن زمان تخلیه آب بیغیرتی", callback_data: "admin:add_release_slot" }],
-  [{ text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" }],
-  [{ text: "📌 پست‌های در دست انتشار", callback_data: "admin:list_scheduled_posts" }],
-  [{ text: "🧾 بررسی اثبات کاکولدی", callback_data: "admin:list_proofs" }],
-  [{ text: "🆘 درخواست‌های پشتیبانی", callback_data: "admin:list_support" }],
-  [{ text: "✅ لیست کاکولدهای تایید شده", callback_data: "admin:list_verified_cuckolds" }],
-  [{ text: "👥 لیست ثبت نامی‌ها", callback_data: "admin:list_profiles" }],
-  [{ text: "📣 ارسال پیام به کاربران", callback_data: "admin:broadcast_start" }],
-  [{ text: "📊 خروجی Excel درخواست‌ها", callback_data: "admin:export_bookings" }],
+  [
+    { text: "➕ زمان مشاوره", callback_data: "admin:add_slot" },
+    { text: "💧 زمان تخلیه", callback_data: "admin:add_release_slot" }
+  ],
+  [
+    { text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" },
+    { text: "📌 پست‌های انتشار", callback_data: "admin:list_scheduled_posts" }
+  ],
+  [
+    { text: "🧾 بررسی اثبات", callback_data: "admin:list_proofs" },
+    { text: "🆘 پشتیبانی", callback_data: "admin:list_support" }
+  ],
+  [
+    { text: "✅ تایید شده‌ها", callback_data: "admin:list_verified_cuckolds" },
+    { text: "👥 ثبت نامی‌ها", callback_data: "admin:list_profiles" }
+  ],
+  [
+    { text: "📣 ارسال پیام", callback_data: "admin:broadcast_start" },
+    { text: "📊 Excel نوبت‌ها", callback_data: "admin:export_bookings" }
+  ],
   [{ text: "📈 دریافت اکسل جامع", callback_data: "admin:export_comprehensive" }],
   [{ text: "📦 آمار سریع", callback_data: "admin:stats" }]
 ];
@@ -621,7 +646,7 @@ async function handleCallback(query, env) {
   }
 
   if (data === "proof:start") {
-    await startCuckoldProof(env, chatId, userId);
+    await startProof(env, chatId, userId);
     return;
   }
 
@@ -651,6 +676,12 @@ async function handleCallback(query, env) {
   if (data === "support:start") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     await startSupportTicket(env, chatId, userId);
+    return;
+  }
+
+  if (data === "guide:photo") {
+    if (!(await ensureRegistered(env, chatId, userId))) return;
+    await sendPhotoGuide(env, chatId, userId);
     return;
   }
 
@@ -726,7 +757,7 @@ async function handleCallback(query, env) {
 
   if (data === "post:type:media") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
-    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+    if (!(await ensureVerifiedContentSubmitter(env, chatId, userId))) return;
     await startMediaPost(env, chatId, userId);
     return;
   }
@@ -839,7 +870,10 @@ async function sendHome(env, chatId) {
       [
         "🔴⚫️ C CLUB",
         "",
-        "برای استفاده از ربات، اول ثبت‌نام کوتاه را کامل کن.",
+        "خوش اومدی.",
+        "برای اینکه فضای کلاب امن، مرتب و قابل اعتماد بمونه، قبل از هر کاری ثبت‌نام کوتاه رو کامل کن.",
+        "",
+        "بعدش منو کامل برات باز می‌شه.",
         "",
         "⚠️ فقط برای کاربران ۱۸ سال به بالا."
       ].join("\n"),
@@ -854,8 +888,9 @@ async function sendHome(env, chatId) {
     [
       "🔴⚫️ C CLUB",
       "",
-      "به ربات رسمی کلاب خوش آمدی.",
-      "از منوی زیر یکی از گزینه‌ها را انتخاب کن.",
+      "خوش برگشتی.",
+      "اینجا می‌تونی تست بدی، محتوا بفرستی، نوبت بگیری یا از پشتیبانی پیام بذاری.",
+      "با خیال راحت انتخاب کن؛ مسیرها مرحله‌به‌مرحله راهنمایی‌ات می‌کنند.",
       "",
       "⚠️ فقط برای کاربران ۱۸ سال به بالا."
     ].join("\n"),
@@ -870,9 +905,14 @@ async function sendHelp(env, chatId) {
     [
       "ℹ️ راهنما",
       "",
-      "برای فعال شدن امکانات باید ثبت‌نام را کامل کنی.",
-      "بعد از ثبت‌نام، تست غیرت، نوبت مشاوره، ارسال عکس و فیلم، و ارسال اعتراف فعال می‌شود.",
-      "عضویت VIP و تخلیه آب بیغیرتی فقط برای کاکولدهای تایید شده فعال است.",
+      "C Club برای ارسال امن‌تر و مرتب‌تر محتوا ساخته شده.",
+      "",
+      "ثبت‌نام برای همه بخش‌ها لازم است.",
+      "ارسال اعتراف برای همه کاربران ثبت‌نام‌کرده باز است.",
+      "ارسال عکس و فیلم فقط برای کاکولدهای تایید شده و هاتوایف‌های تایید شده فعال می‌شود.",
+      "عضویت VIP و تخلیه آب بیغیرتی فقط برای کاکولدهای تایید شده است.",
+      "",
+      "قبل از ارسال عکس یا فیلم، حتماً راهنمای ارسال عکس را بخوان.",
       "",
       "لغو هر مسیر: /cancel"
     ].join("\n"),
@@ -990,6 +1030,7 @@ async function finishRegistration(env, query, type) {
     typeLabel: USER_TYPE_LABELS[type],
     registered: true,
     cuckoldVerified: false,
+    hotwifeVerified: false,
     createdAt: new Date().toISOString()
   };
 
@@ -1013,10 +1054,19 @@ async function finishRegistration(env, query, type) {
   );
 }
 
+async function startProof(env, chatId, userId) {
+  const profile = await getProfile(env, userId);
+  if (profile?.registered && profile.gender === "female" && profile.type === "hotwife") {
+    await startHotwifeProof(env, chatId, userId);
+    return;
+  }
+  await startCuckoldProof(env, chatId, userId);
+}
+
 async function startCuckoldProof(env, chatId, userId) {
   const profile = await getProfile(env, userId);
   if (!profile?.registered || profile.type !== "cuckold" || profile.gender !== "male") {
-    await sendMessage(env, chatId, "این بخش فقط برای کاربران مرد با نوع کاکولد فعال است.");
+    await sendMessage(env, chatId, "این بخش فقط برای کاکولدها و هاتوایف‌ها فعال است.", keyboard(BACK_TO_MENU));
     return;
   }
   if (profile.cuckoldVerified) {
@@ -1047,14 +1097,59 @@ async function startCuckoldProof(env, chatId, userId) {
     [
       "🧾 اثبات کاکولدی",
       "",
-      "برای تایید، چند مرحله کوتاه داری.",
-      "کیفیت فایل‌ها مهم است؛ تصویر واضح، نور مناسب و چهره‌ها قابل تشخیص باشند.",
-      "نکات اخلاقی رعایت شود.",
-      "بعد از بررسی ادمین، شناسه فایل‌ها از حافظه ربات پاک می‌شود.",
+      "این مرحله برای اینه که فضای کلاب امن و قابل اعتماد بمونه.",
+      "فایل‌ها فقط برای بررسی ادمین استفاده می‌شن و بعد از تایید یا رد، شناسه فایل‌ها از حافظه ربات پاک می‌شه.",
+      "",
+      "لطفاً با آرامش جلو برو؛ کیفیت، وضوح و رعایت نکات اخلاقی خیلی مهمه.",
       "",
       "۱) روی چه شخصی کاکولد هستی؟ می‌توانی چند گزینه را انتخاب کنی:"
     ].join("\n"),
     keyboard(proofRelationshipKeyboard([]))
+  );
+}
+
+async function startHotwifeProof(env, chatId, userId) {
+  const profile = await getProfile(env, userId);
+  if (!profile?.registered || profile.type !== "hotwife" || profile.gender !== "female") {
+    await sendMessage(env, chatId, "این بخش فقط برای کاربران هاتوایف فعال است.", keyboard(BACK_TO_MENU));
+    return;
+  }
+  if (profile.hotwifeVerified) {
+    await sendMessage(env, chatId, "✅ هاتوایفی شما قبلاً تایید شده است.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+
+  const pendingProof = await getPendingProofForUser(env, userId);
+  if (pendingProof) {
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "⏳ یک درخواست اثبات در انتظار بررسی داری.",
+        "",
+        `کد درخواست: ${pendingProof.id}`,
+        "بعد از بررسی ادمین نتیجه همین‌جا برات ارسال می‌شه."
+      ].join("\n"),
+      keyboard(await getMainMenuForUser(env, userId))
+    );
+    return;
+  }
+
+  await setState(env, userId, { mode: "proof_voice", proofType: "hotwife" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🧾 اثبات هاتوایفی",
+      "",
+      "برای تایید، فقط یک وویس کوتاه لازم داریم.",
+      "لطفاً با صدای واضح بگو:",
+      "",
+      `«سلام سی کلاب من ${profile.name || "..." } هستم هاتوایف لطفا من رو تایید کن.»`,
+      "",
+      "وویس باید بین ۲ تا ۶۰ ثانیه باشد.",
+      "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
+    ].join("\n")
   );
 }
 
@@ -1063,7 +1158,7 @@ async function handleProofRelationship(env, query, relationship) {
   const userId = String(query.from.id);
   const state = await getState(env, userId);
   if (!state || state.mode !== "proof_relationship") {
-    await startCuckoldProof(env, chatId, userId);
+    await startProof(env, chatId, userId);
     return;
   }
 
@@ -1113,6 +1208,15 @@ async function handleProofVoice(env, message, state) {
     await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.");
     return;
   }
+  if (state.proofType === "hotwife") {
+    if (voice.duration < 2 || voice.duration > 60) {
+      await sendMessage(env, chatId, "❌ وویس اثبات هاتوایفی باید بین ۲ تا ۶۰ ثانیه باشد. دوباره بفرست:");
+      return;
+    }
+    await saveHotwifeProof(env, message, state, voice);
+    return;
+  }
+
   if (voice.duration < 5 || voice.duration > 180) {
     await sendMessage(env, chatId, "❌ وویس باید بین ۵ تا ۱۸۰ ثانیه باشد. دوباره بفرست:");
     return;
@@ -1138,6 +1242,31 @@ async function handleProofVoice(env, message, state) {
       "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
     ].join("\n")
   );
+}
+
+async function saveHotwifeProof(env, message, state, voice) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const profile = await getProfile(env, userId);
+  const proofId = shortId();
+  const proof = {
+    id: proofId,
+    proofType: "hotwife",
+    userId,
+    username: message.from.username || "",
+    firstName: message.from.first_name || "",
+    voiceFileId: voice.file_id,
+    voiceDuration: voice.duration,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+
+  await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
+  await putListItem(env, "proofs", proof);
+  await clearState(env, userId);
+
+  await sendMessage(env, chatId, "✅ وویس اثبات ثبت شد و برای ادمین رفت.\n\nنتیجه بررسی همین‌جا بهت اعلام می‌شه.", keyboard(await getMainMenuForUser(env, userId)));
+  await sendProofToAdmin(env, proof, profile, message.from);
 }
 
 async function handleProofSelfie(env, message, state) {
@@ -1232,8 +1361,9 @@ async function handleProofPartnerNoHijab(env, message, state) {
 }
 
 async function sendProofToAdmin(env, proof, profile, user) {
+  const isHotwife = proof.proofType === "hotwife";
   const controls = keyboard([[
-    { text: "✅ تایید کاکولد", callback_data: `proof:approve:${proof.id}` },
+    { text: isHotwife ? "✅ تایید هاتوایف" : "✅ تایید کاکولد", callback_data: `proof:approve:${proof.id}` },
     { text: "❌ رد", callback_data: `proof:reject:${proof.id}` }
   ]]);
 
@@ -1241,17 +1371,19 @@ async function sendProofToAdmin(env, proof, profile, user) {
     env,
     env.ADMIN_CHAT_ID,
     [
-      "🧾 درخواست اثبات کاکولدی",
+      isHotwife ? "🧾 درخواست اثبات هاتوایفی" : "🧾 درخواست اثبات کاکولدی",
       "",
       `کد: ${proof.id}`,
       `کاربر: ${formatUser(user)}`,
       `نام ثبت‌نام: ${profile?.name || "-"}`,
       `سن: ${profile?.age || "-"}`,
       `شهر: ${profile?.city || "-"}`,
-      `گزینه‌ها: ${proof.relationships.map(proofRelationshipLabel).join("، ")}`
+      isHotwife ? "نوع اثبات: وویس هاتوایفی" : `گزینه‌ها: ${proof.relationships.map(proofRelationshipLabel).join("، ")}`
     ].join("\n")
   );
-  await sendVoice(env, env.ADMIN_CHAT_ID, proof.voiceFileId, `🎙 وویس اثبات - کد ${proof.id}`);
+  await sendVoice(env, env.ADMIN_CHAT_ID, proof.voiceFileId, `🎙 وویس اثبات - کد ${proof.id}`, isHotwife ? controls : {});
+  if (isHotwife) return;
+
   await sendPhoto(env, env.ADMIN_CHAT_ID, proof.selfiePhotoFileId, `📷 عکس ۱: دو نفره - کد ${proof.id}`);
   await sendPhoto(env, env.ADMIN_CHAT_ID, proof.partnerHijabPhotoFileId, `🧕 عکس ۲: با حجاب - کد ${proof.id}`);
   await sendPhoto(env, env.ADMIN_CHAT_ID, proof.partnerNoHijabPhotoFileId, `💫 عکس ۳: بدون حجاب - کد ${proof.id}`, controls);
@@ -1279,12 +1411,20 @@ async function approveProof(env, query, proofId) {
 
   const profile = await getProfile(env, proof.userId);
   if (profile) {
-    profile.cuckoldVerified = true;
-    profile.cuckoldVerifiedAt = proof.reviewedAt;
+    if (proof.proofType === "hotwife") {
+      profile.hotwifeVerified = true;
+      profile.hotwifeVerifiedAt = proof.reviewedAt;
+    } else {
+      profile.cuckoldVerified = true;
+      profile.cuckoldVerifiedAt = proof.reviewedAt;
+    }
     await env.BOT_KV.put(`profile:${proof.userId}`, JSON.stringify(profile));
   }
 
-  await sendMessage(env, proof.userId, "✅ تایید شد. شما به عنوان کاکولد ثبت نام شدید و اکنون می‌توانید از همه قابلیت‌های ربات استفاده کنید.", keyboard(await getMainMenuForUser(env, proof.userId)));
+  const approvedText = proof.proofType === "hotwife"
+    ? "✅ تایید شد. شما به عنوان هاتوایف تایید شدید و اکنون می‌توانید محتوای عکس و فیلم ارسال کنید."
+    : "✅ تایید شد. شما به عنوان کاکولد ثبت نام شدید و اکنون می‌توانید از همه قابلیت‌های ربات استفاده کنید.";
+  await sendMessage(env, proof.userId, approvedText, keyboard(await getMainMenuForUser(env, proof.userId)));
   await sendMessage(env, chatId, `✅ درخواست تایید شد.\nکد: ${proofId}`);
 }
 
@@ -1332,7 +1472,8 @@ async function rejectProofWithReason(env, query, proofId, reason) {
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
   await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "rejected", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy, rejectReason: finalReason }));
 
-  await sendMessage(env, proof.userId, ["❌ درخواست اثبات کاکولدی تایید نشد.", "", `دلیل: ${finalReason}`].join("\n"), keyboard(BACK_TO_MENU));
+  const rejectedTitle = proof.proofType === "hotwife" ? "❌ درخواست اثبات هاتوایفی تایید نشد." : "❌ درخواست اثبات کاکولدی تایید نشد.";
+  await sendMessage(env, proof.userId, [rejectedTitle, "", `دلیل: ${finalReason}`].join("\n"), keyboard(BACK_TO_MENU));
   await sendMessage(env, chatId, `❌ درخواست رد شد.\nکد: ${proofId}\nدلیل: ${finalReason}`);
 }
 
@@ -1834,9 +1975,12 @@ async function startPostSubmission(env, chatId, userId) {
     env,
     chatId,
     [
-      "📝 ارسال محتوا",
+      "📝 ارسال محتوا در C Club",
       "",
-      "نوع پست را انتخاب کن:",
+      "خوشحالیم که تصمیم گرفتی تصویر، فیلم یا اعترافت رو با ما به اشتراک بذاری.",
+      "قبل از ارسال عکس و فیلم، راهنما رو بخون تا پستت سریع‌تر تایید بشه.",
+      "",
+      "نوع محتوا رو انتخاب کن:",
       "",
       "🎬 عکس یا فیلم: اول فایل، بعد کپشن",
       "✍️ اعترافات: فقط متن، حداقل ۱۰ کلمه"
@@ -1853,11 +1997,18 @@ async function startMediaPost(env, chatId, userId) {
     [
       "🎬 ارسال عکس و فیلم",
       "",
-      "اول خود عکس یا فیلم را بفرست.",
-      "بعد از دریافت فایل، کپشن را جداگانه می‌پرسم.",
+      "خوشحالیم که تصمیم گرفتی با C Club محتوات رو به اشتراک بذاری.",
+      "",
+      "برای اینکه پستت شانس تایید بیشتری داشته باشه:",
+      "• عکس/فیلم واضح، جذاب و با کیفیت بفرست.",
+      "• محتوای مخفیانه، واترمارک‌دار یا دستکاری‌شده تایید نمی‌شه.",
+      "• محتوای نود کامل قابل انتشار نیست.",
+      "",
+      "اول خود عکس یا فیلم رو بفرست؛ بعد کپشن رو جداگانه ازت می‌پرسم.",
       "",
       "لغو: /cancel"
-    ].join("\n")
+    ].join("\n"),
+    keyboard([[{ text: "📸 راهنمای ارسال عکس", callback_data: "guide:photo" }]])
   );
 }
 
@@ -1874,6 +2025,63 @@ async function startConfessionPost(env, chatId, userId) {
       "",
       "لغو: /cancel"
     ].join("\n")
+  );
+}
+
+async function sendPhotoGuide(env, chatId, userId) {
+  try {
+    await sendPhoto(
+      env,
+      chatId,
+      PHOTO_GUIDE_IMAGE_URL,
+      [
+        "📸 راهنمای تصویری ارسال عکس",
+        "",
+        "ردیف بالا و پایین: نمونه‌های اشتباه و نمونه درست از نظر کیفیت، کادر، حریم خصوصی و دستکاری تصویر."
+      ].join("\n")
+    );
+  } catch {
+    // Text guide below is still useful if Telegram cannot fetch the hosted image.
+  }
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "📸 راهنمای ارسال عکس و فیلم",
+      "",
+      "خوشحالیم که تصمیم گرفتی با ما تصاویر و فیلم‌های خودت رو به اشتراک بذاری.",
+      "قبل از ادامه، لطفاً این نکات رو با دقت بخون تا هم حریم خصوصی حفظ بشه، هم پستت سریع‌تر تایید بشه.",
+      "",
+      "🌻 نکات اخلاقی",
+      "",
+      "1⃣ برای حفظ حریم خصوصی افراد، عکس یا فیلم باید از همسر، نامزد یا دوست‌دختر شما باشد. عکس از افراد دیگر مورد پذیرش نیست و در بررسی اثبات لحاظ می‌شود.",
+      "",
+      "2⃣ عکس یا فیلم مخفیانه مورد قبول نیست. عکس‌های مخفیانه معمولاً با رضایت افراد نیستند و تایید نمی‌شوند.",
+      "",
+      "3⃣ جهت حفظ حریم خصوصی، امکان ذخیره و به‌اشتراک‌گذاری مستقیم فایل‌ها از کانال بسته شده است.",
+      "",
+      "❇️ نکات فنی",
+      "",
+      "1⃣ عکس/فیلم بی‌کیفیت مورد قبول نیست.",
+      "",
+      "2⃣ عکس/فیلمی که واترمارک، نوشته یا دستکاری داشته باشد، مثل حذف بک‌گراند، کات کردن، پوشاندن چهره با Brush و موارد مشابه، تایید نمی‌شود.",
+      "",
+      "3⃣ عکس/فیلم باید جذاب و تحریک‌کننده باشد؛ محتوای خیلی عادی که جاذبه خاصی ندارد معمولاً تایید نمی‌شود.",
+      "",
+      "4⃣ عکس/فیلم نباید نود کامل باشد. به دلیل محدودیت‌های تلگرام امکان انتشار عکس‌های کاملاً لخت وجود ندارد.",
+      "",
+      "❌ پنج نمونه اشتباه",
+      "• عکس کم‌کیفیت یا تار",
+      "• عکس زیادی زوم‌شده",
+      "• عکس خیلی عادی و غیرجذاب",
+      "• عکس مخفیانه",
+      "• عکس واترمارک‌دار یا دستکاری‌شده",
+      "",
+      "✅ نمونه درست",
+      "عکس واضح، با نور مناسب، کادر تمیز، حالت جذاب، بدون واترمارک و بدون حس مخفیانه."
+    ].join("\n"),
+    keyboard(await getMainMenuForUser(env, userId))
   );
 }
 
@@ -2252,6 +2460,7 @@ async function handleAdminCallback(env, query, data) {
     const pendingProofs = proofs.filter((proof) => proof.status === "pending");
     const releases = await getList(env, "release_requests");
     const verified = profiles.filter((profile) => profile.cuckoldVerified);
+    const verifiedHotwives = profiles.filter((profile) => profile.hotwifeVerified);
     await sendMessage(
       env,
       chatId,
@@ -2260,6 +2469,7 @@ async function handleAdminCallback(env, query, data) {
         "",
         `ثبت‌نامی‌ها: ${profiles.length}`,
         `کاکولدهای تایید شده: ${verified.length}`,
+        `هاتوایف‌های تایید شده: ${verifiedHotwives.length}`,
         `درخواست‌های اثبات: ${proofs.length}`,
         `اثبات‌های در انتظار: ${pendingProofs.length}`,
         `نوبت‌های مشاوره: ${bookings.length}`,
@@ -2698,7 +2908,7 @@ async function exportComprehensive(env, chatId) {
   const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_reject_reason"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "hotwife_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_reject_reason"],
     ...profiles.map((profile) => {
       const userTests = tests.filter((item) => item.userId === profile.userId);
       const lastTest = userTests[userTests.length - 1];
@@ -2718,6 +2928,7 @@ async function exportComprehensive(env, chatId) {
         profile.city,
         profile.typeLabel || profile.type,
         profile.cuckoldVerified ? "yes" : "no",
+        profile.hotwifeVerified ? "yes" : "no",
         profile.createdAt,
         userTests.length,
         lastTest?.total ?? "",
@@ -3012,6 +3223,26 @@ async function ensureVerifiedCuckold(env, chatId, userId) {
   return false;
 }
 
+async function ensureVerifiedContentSubmitter(env, chatId, userId) {
+  const profile = await getProfile(env, userId);
+  const verifiedCuckold = profile?.registered && profile.gender === "male" && profile.type === "cuckold" && profile.cuckoldVerified;
+  const verifiedHotwife = profile?.registered && profile.gender === "female" && profile.type === "hotwife" && profile.hotwifeVerified;
+  if (verifiedCuckold || verifiedHotwife) return true;
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "⛔️ ارسال عکس و فیلم برای شما هنوز فعال نیست.",
+      "",
+      "برای حفظ امنیت و کیفیت کانال، این بخش فقط برای کاکولدهای تایید شده و هاتوایف‌های تایید شده باز است.",
+      "اگر کاکولد یا هاتوایف هستی، اول از دکمه اثبات اقدام کن."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
+  return false;
+}
+
 async function getMainMenuForUser(env, userId) {
   const profile = await getProfile(env, userId);
   if (!profile?.registered) return LOCKED_MENU;
@@ -3019,6 +3250,9 @@ async function getMainMenuForUser(env, userId) {
   const rows = [...MAIN_MENU];
   if (profile.gender === "male" && profile.type === "cuckold" && !profile.cuckoldVerified) {
     rows.splice(1, 0, [{ text: "🧾 اثبات کاکولدی", callback_data: "proof:start" }]);
+  }
+  if (profile.gender === "female" && profile.type === "hotwife" && !profile.hotwifeVerified) {
+    rows.splice(1, 0, [{ text: "🧾 اثبات هاتوایفی", callback_data: "proof:start" }]);
   }
   return rows;
 }
@@ -3047,7 +3281,7 @@ function formatProfilesTable(title, profiles) {
 
 function profileRows(profiles) {
   return [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "hotwife_verified", "registered_at"],
     ...profiles.map((profile) => [
       profile.userId,
       profile.name,
@@ -3058,6 +3292,7 @@ function profileRows(profiles) {
       profile.city,
       profile.typeLabel || profile.type,
       profile.cuckoldVerified ? "yes" : "no",
+      profile.hotwifeVerified ? "yes" : "no",
       profile.createdAt
     ])
   ];
