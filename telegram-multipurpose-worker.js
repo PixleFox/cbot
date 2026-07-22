@@ -1,5 +1,6 @@
 const CHANNEL_USERNAME = "@cucksclub";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
+const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
 const QUESTION_COUNT = 18;
 const MAX_TEXT_LENGTH = 2800;
 const MAX_PHOTO_CAPTION_LENGTH = 900;
@@ -348,8 +349,11 @@ const MAIN_MENU = [
   [{ text: "📅 نوبت مشاوره", callback_data: "menu:booking" }],
   [{ text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" }],
   [{ text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }],
+  [{ text: "🔁 عضویت در گروه تبادل عکس و فیلم", callback_data: "exchange:join" }],
   [{ text: "🔞 عضویت در گروه VIP کاکولدی", callback_data: "vip:join" }],
   [{ text: "💧 تخلیه آب بیغیرتی", callback_data: "release:start" }],
+  [{ text: "🎭 ساخت عکس و فیلم با چهره دلخواه", callback_data: "face:create" }],
+  [{ text: "🆘 پشتیبانی", callback_data: "support:start" }],
   [{ text: "ℹ️ راهنما", callback_data: "menu:help" }]
 ];
 
@@ -396,7 +400,9 @@ const ADMIN_MENU = [
   [{ text: "➕ افزودن زمان مشاوره", callback_data: "admin:add_slot" }],
   [{ text: "💧 افزودن زمان تخلیه آب بیغیرتی", callback_data: "admin:add_release_slot" }],
   [{ text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" }],
+  [{ text: "📌 پست‌های در دست انتشار", callback_data: "admin:list_scheduled_posts" }],
   [{ text: "🧾 بررسی اثبات کاکولدی", callback_data: "admin:list_proofs" }],
+  [{ text: "🆘 درخواست‌های پشتیبانی", callback_data: "admin:list_support" }],
   [{ text: "✅ لیست کاکولدهای تایید شده", callback_data: "admin:list_verified_cuckolds" }],
   [{ text: "👥 لیست ثبت نامی‌ها", callback_data: "admin:list_profiles" }],
   [{ text: "📣 ارسال پیام به کاربران", callback_data: "admin:broadcast_start" }],
@@ -480,6 +486,21 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "admin_broadcast_text") {
     await finishBroadcastText(env, message, text);
+    return;
+  }
+
+  if (state?.mode === "admin_broadcast_individual") {
+    await finishBroadcastIndividualTarget(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "support_text") {
+    await finishSupportTicket(env, message, text);
+    return;
+  }
+
+  if (state?.mode === "admin_support_reply") {
+    await finishSupportReply(env, message, state, text);
     return;
   }
 
@@ -614,6 +635,25 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data === "exchange:join") {
+    if (!(await ensureRegistered(env, chatId, userId))) return;
+    await sendExchangeGroup(env, chatId);
+    return;
+  }
+
+  if (data === "face:create") {
+    if (!(await ensureRegistered(env, chatId, userId))) return;
+    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+    await sendMessage(env, chatId, "🎭 ساخت عکس و فیلم با چهره دلخواه\n\nبه زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+
+  if (data === "support:start") {
+    if (!(await ensureRegistered(env, chatId, userId))) return;
+    await startSupportTicket(env, chatId, userId);
+    return;
+  }
+
   if (data.startsWith("proof:rel:")) {
     await handleProofRelationship(env, query, data.replace("proof:rel:", ""));
     return;
@@ -720,6 +760,24 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data === "broadcast:individual") {
+    if (!isAdmin(env, userId)) return;
+    await startBroadcastIndividualTarget(env, query);
+    return;
+  }
+
+  if (data.startsWith("support:view:")) {
+    if (!isAdmin(env, userId)) return;
+    await viewSupportTicket(env, query, data.replace("support:view:", ""));
+    return;
+  }
+
+  if (data.startsWith("support:reply:")) {
+    if (!isAdmin(env, userId)) return;
+    await startSupportReply(env, query, data.replace("support:reply:", ""));
+    return;
+  }
+
   if (data.startsWith("post:approve:")) {
     if (!isAdmin(env, userId)) return;
     await askPostPublishDate(env, query, data.replace("post:approve:", ""));
@@ -749,6 +807,12 @@ async function handleCallback(query, env) {
     if (!isAdmin(env, userId)) return;
     const [, , postId, dateKey] = data.split(":");
     await schedulePost(env, query, postId, dateKey);
+    return;
+  }
+
+  if (data.startsWith("post:cancel:")) {
+    if (!isAdmin(env, userId)) return;
+    await cancelScheduledPost(env, query, data.replace("post:cancel:", ""));
     return;
   }
 
@@ -1566,6 +1630,91 @@ async function handleVipJoin(env, chatId, userId) {
   );
 }
 
+async function sendExchangeGroup(env, chatId) {
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🔁 گروه تبادل عکس و فیلم",
+      "",
+      "برای عضویت روی دکمه زیر بزن."
+    ].join("\n"),
+    keyboard([
+      [{ text: "ورود به گروه تبادل", url: EXCHANGE_GROUP_URL }],
+      [{ text: "↩️ برگشت به منو", callback_data: "menu:home" }]
+    ])
+  );
+}
+
+async function startSupportTicket(env, chatId, userId) {
+  await setState(env, userId, { mode: "support_text" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🆘 پشتیبانی",
+      "",
+      "مشکل یا پیام خودت را کامل بنویس.",
+      "ادمین پاسخ را همین‌جا از طریق ربات برایت می‌فرستد.",
+      "",
+      "لغو: /cancel"
+    ].join("\n")
+  );
+}
+
+async function finishSupportTicket(env, message, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const body = cleanText(text);
+  if (!message.text || body.startsWith("/")) {
+    await sendMessage(env, chatId, "❌ لطفاً پیام پشتیبانی را به صورت متن معمولی بفرست.");
+    return;
+  }
+  if (body.length < 5 || body.length > 2000) {
+    await sendMessage(env, chatId, "❌ متن پشتیبانی باید بین ۵ تا ۲۰۰۰ کاراکتر باشد. دوباره بنویس:");
+    return;
+  }
+
+  const ticketId = shortId();
+  const profile = await getProfile(env, userId);
+  const ticket = {
+    id: ticketId,
+    userId,
+    username: message.from.username || "",
+    firstName: message.from.first_name || "",
+    profileName: profile?.name || "",
+    body,
+    status: "open",
+    createdAt: new Date().toISOString()
+  };
+
+  await env.BOT_KV.put(`support:${ticketId}`, JSON.stringify(ticket));
+  await putListItem(env, "support_tickets", ticket);
+  await clearState(env, userId);
+
+  await sendMessage(env, chatId, `✅ پیام پشتیبانی ثبت شد.\n\nکد پیگیری: ${ticketId}`, keyboard(await getMainMenuForUser(env, userId)));
+  await sendAdminSupportTicket(env, ticket);
+}
+
+async function sendAdminSupportTicket(env, ticket) {
+  await sendMessage(
+    env,
+    env.ADMIN_CHAT_ID,
+    [
+      "🆘 درخواست پشتیبانی جدید",
+      "",
+      `کد: ${ticket.id}`,
+      `کاربر: ${ticket.profileName || ticket.firstName || "-"} | ${ticket.username ? `@${ticket.username}` : ticket.userId}`,
+      `زمان: ${formatDateTime(ticket.createdAt)}`,
+      "",
+      ticket.body
+    ].join("\n"),
+    keyboard([[
+      { text: "✉️ پاسخ", callback_data: `support:reply:${ticket.id}` }
+    ]])
+  );
+}
+
 async function startReleaseFlow(env, chatId, userId) {
   if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
 
@@ -2037,6 +2186,11 @@ async function handleAdminCallback(env, query, data) {
     return;
   }
 
+  if (data === "admin:list_scheduled_posts") {
+    await listScheduledPosts(env, chatId);
+    return;
+  }
+
   if (data === "admin:export_bookings") {
     await exportBookings(env, chatId);
     return;
@@ -2044,6 +2198,11 @@ async function handleAdminCallback(env, query, data) {
 
   if (data === "admin:list_proofs") {
     await listPendingProofs(env, chatId);
+    return;
+  }
+
+  if (data === "admin:list_support") {
+    await listSupportTickets(env, chatId);
     return;
   }
 
@@ -2084,9 +2243,12 @@ async function handleAdminCallback(env, query, data) {
     const scheduledPosts = posts.filter((post) => post.status === "scheduled");
     const publishedPosts = posts.filter((post) => post.status === "published");
     const rejectedPosts = posts.filter((post) => post.status === "rejected");
+    const canceledPosts = posts.filter((post) => post.status === "canceled");
     const tests = await getList(env, "test_results");
     const profiles = await getProfiles(env);
     const proofs = await getProofs(env);
+    const supportTickets = await getSupportTickets(env);
+    const openSupportTickets = supportTickets.filter((ticket) => ticket.status !== "answered");
     const pendingProofs = proofs.filter((proof) => proof.status === "pending");
     const releases = await getList(env, "release_requests");
     const verified = profiles.filter((profile) => profile.cuckoldVerified);
@@ -2106,6 +2268,9 @@ async function handleAdminCallback(env, query, data) {
         `پست‌های زمان‌بندی‌شده: ${scheduledPosts.length}`,
         `پست‌های منتشر شده: ${publishedPosts.length}`,
         `پست‌های رد شده: ${rejectedPosts.length}`,
+        `پست‌های لغو شده: ${canceledPosts.length}`,
+        `درخواست‌های پشتیبانی: ${supportTickets.length}`,
+        `پشتیبانی پاسخ نداده: ${openSupportTickets.length}`,
         `نتایج تست غیرت: ${tests.length}`
       ].join("\n"),
       keyboard(ADMIN_MENU)
@@ -2187,6 +2352,45 @@ async function sendAdminPanel(env, chatId) {
   await sendMessage(env, chatId, "🛠 پنل ادمین\n\nچه کاری می‌خواهی انجام بدهی؟", keyboard(ADMIN_MENU));
 }
 
+async function listScheduledPosts(env, chatId) {
+  const posts = (await getPosts(env))
+    .filter((post) => post.status === "scheduled")
+    .sort((a, b) => Date.parse(a.scheduledAt || "9999-12-31") - Date.parse(b.scheduledAt || "9999-12-31"));
+
+  if (!posts.length) {
+    await sendMessage(env, chatId, "هیچ پستی در دست انتشار نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const lines = ["📌 پست‌های در دست انتشار", ""];
+  const rows = [];
+  for (const post of posts.slice(0, 20)) {
+    const profile = await getProfile(env, post.userId);
+    lines.push(`${formatDateTime(post.scheduledAt)} | ${postTypeLabel(post.kind)} | ${profile?.name || post.firstName || "-"} | کد ${post.id}`);
+    rows.push([{ text: `❌ لغو انتشار ${postTypeLabel(post.kind)} | ${formatDateTime(post.scheduledAt)}`, callback_data: `post:cancel:${post.id}` }]);
+  }
+
+  await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function cancelScheduledPost(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "scheduled") {
+    await sendMessage(env, chatId, "این پست پیدا نشد یا دیگر در دست انتشار نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  post.status = "canceled";
+  post.canceledAt = new Date().toISOString();
+  post.canceledBy = String(query.from.id);
+  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
+  await updateListItem(env, "posts", postId, (item) => ({ ...item, status: "canceled", canceledAt: post.canceledAt, canceledBy: post.canceledBy }));
+
+  await sendMessage(env, post.userId, `❌ انتشار پستت لغو شد.\n\nکد: ${postId}`);
+  await sendMessage(env, chatId, `✅ انتشار لغو شد.\nکد: ${postId}`, keyboard(ADMIN_MENU));
+}
+
 async function listPendingProofs(env, chatId) {
   const proofs = (await getPendingProofs(env)).slice(-10).reverse();
   if (!proofs.length) {
@@ -2207,6 +2411,95 @@ async function listPendingProofs(env, chatId) {
   }
 
   await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function listSupportTickets(env, chatId) {
+  const tickets = (await getSupportTickets(env)).sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
+  if (!tickets.length) {
+    await sendMessage(env, chatId, "درخواست پشتیبانی ثبت نشده.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const lines = ["🆘 درخواست‌های پشتیبانی", ""];
+  const rows = [];
+  for (const ticket of tickets.slice(0, 20)) {
+    const statusLabel = ticket.status === "answered" ? "پاسخ داده" : "پاسخ نداده";
+    lines.push(`${statusLabel} | ${formatDateTime(ticket.createdAt)} | ${ticket.profileName || ticket.firstName || "-"} | کد ${ticket.id}`);
+    rows.push([{ text: `👁 ${statusLabel} | ${ticket.profileName || ticket.firstName || ticket.id}`, callback_data: `support:view:${ticket.id}` }]);
+  }
+
+  await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function viewSupportTicket(env, query, ticketId) {
+  const chatId = String(query.message.chat.id);
+  const ticket = await getJson(env, `support:${ticketId}`);
+  if (!ticket) {
+    await sendMessage(env, chatId, "درخواست پشتیبانی پیدا نشد.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const lines = [
+    "🆘 درخواست پشتیبانی",
+    "",
+    `کد: ${ticket.id}`,
+    `وضعیت: ${ticket.status === "answered" ? "پاسخ داده" : "پاسخ نداده"}`,
+    `کاربر: ${ticket.profileName || ticket.firstName || "-"} | ${ticket.username ? `@${ticket.username}` : ticket.userId}`,
+    `زمان: ${formatDateTime(ticket.createdAt)}`,
+    "",
+    "متن کاربر:",
+    ticket.body
+  ];
+  if (ticket.answer) {
+    lines.push("", "پاسخ ادمین:", ticket.answer);
+  }
+
+  await sendMessage(env, chatId, lines.join("\n"), keyboard([
+    [{ text: "✉️ پاسخ", callback_data: `support:reply:${ticket.id}` }],
+    [{ text: "↩️ لیست پشتیبانی", callback_data: "admin:list_support" }]
+  ]));
+}
+
+async function startSupportReply(env, query, ticketId) {
+  const chatId = String(query.message.chat.id);
+  const ticket = await getJson(env, `support:${ticketId}`);
+  if (!ticket) {
+    await sendMessage(env, chatId, "درخواست پشتیبانی پیدا نشد.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  await setState(env, String(query.from.id), { mode: "admin_support_reply", ticketId });
+  await sendMessage(env, chatId, `✉️ پاسخ پشتیبانی را بنویس:\n\nکد: ${ticketId}\nلغو: /cancel`);
+}
+
+async function finishSupportReply(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const answer = cleanText(text);
+  if (answer.length < 2 || answer.length > 3000) {
+    await sendMessage(env, chatId, "❌ پاسخ باید بین ۲ تا ۳۰۰۰ کاراکتر باشد. دوباره بنویس:");
+    return;
+  }
+
+  const ticket = await getJson(env, `support:${state.ticketId}`);
+  if (!ticket) {
+    await clearState(env, userId);
+    await sendMessage(env, chatId, "درخواست پشتیبانی پیدا نشد.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  ticket.status = "answered";
+  ticket.answer = answer;
+  ticket.answeredAt = new Date().toISOString();
+  ticket.answeredBy = userId;
+  await env.BOT_KV.put(`support:${ticket.id}`, JSON.stringify(ticket));
+  await updateListItem(env, "support_tickets", ticket.id, (item) => ({ ...item, status: "answered", answer, answeredAt: ticket.answeredAt, answeredBy: userId }));
+  await clearState(env, userId);
+
+  await sendMessage(env, ticket.userId, ["🆘 پاسخ پشتیبانی", "", `کد: ${ticket.id}`, "", answer].join("\n"), keyboard(await getMainMenuForUser(env, ticket.userId)));
+  await sendMessage(env, chatId, `✅ پاسخ ارسال شد.\nکد: ${ticket.id}`, keyboard(ADMIN_MENU));
 }
 
 async function viewProof(env, query, proofId) {
@@ -2290,8 +2583,65 @@ async function finishBroadcastText(env, message, text) {
     [{ text: "همه کاربران", callback_data: "broadcast:send:all" }],
     [{ text: "همه کاکولدها", callback_data: "broadcast:send:cuckolds" }],
     [{ text: "کاکولدهای تایید شده", callback_data: "broadcast:send:verified_cuckolds" }],
+    [{ text: "ارسال به فرد خاص", callback_data: "broadcast:individual" }],
     [{ text: "لغو", callback_data: "menu:home" }]
   ]));
+}
+
+async function startBroadcastIndividualTarget(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  if (!state?.body) {
+    await sendMessage(env, chatId, "متن پیام پیدا نشد. دوباره از پنل ادمین شروع کن.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  await setState(env, userId, { ...state, mode: "admin_broadcast_individual" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "👤 گیرنده خاص را وارد کن.",
+      "",
+      "می‌توانی یکی از این‌ها را بفرستی:",
+      "آیدی عددی تلگرام",
+      "@username",
+      "نام ثبت‌نامی"
+    ].join("\n")
+  );
+}
+
+async function finishBroadcastIndividualTarget(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const queryText = cleanText(text);
+  const profile = await findProfileForAdmin(env, queryText);
+  if (!profile) {
+    await sendMessage(env, chatId, "❌ کاربر پیدا نشد. آیدی عددی، username یا نام ثبت‌نامی را دقیق‌تر بفرست:");
+    return;
+  }
+
+  try {
+    await sendMessage(env, profile.userId, state.body);
+  } catch (error) {
+    await sendMessage(env, chatId, `❌ ارسال به این کاربر انجام نشد.\n\n${String(error?.message || error)}`);
+    return;
+  }
+
+  await clearState(env, userId);
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "✅ پیام برای فرد خاص ارسال شد.",
+      "",
+      `گیرنده: ${profile.name || "-"} | ${profile.username || profile.userId}`
+    ].join("\n"),
+    keyboard(ADMIN_MENU)
+  );
 }
 
 async function sendBroadcast(env, query, target) {
@@ -2345,14 +2695,17 @@ async function exportComprehensive(env, chatId) {
   const posts = await getList(env, "posts");
   const tests = await getList(env, "test_results");
   const proofs = await getProofs(env);
+  const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "proof_statuses", "last_proof_reject_reason"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_reject_reason"],
     ...profiles.map((profile) => {
       const userTests = tests.filter((item) => item.userId === profile.userId);
       const lastTest = userTests[userTests.length - 1];
       const userPosts = posts.filter((item) => item.userId === profile.userId);
       const lastPost = userPosts[userPosts.length - 1];
+      const userSupportTickets = supportTickets.filter((item) => item.userId === profile.userId);
+      const lastSupportTicket = userSupportTickets[userSupportTickets.length - 1];
       const userProofs = proofs.filter((item) => item.userId === profile.userId);
       const lastRejectedProof = [...userProofs].reverse().find((item) => item.rejectReason);
       return [
@@ -2387,6 +2740,10 @@ async function exportComprehensive(env, chatId) {
         lastPost?.scheduledAt ?? "",
         lastPost?.publishedAt ?? "",
         lastPost?.rejectReason ?? "",
+        userSupportTickets.length,
+        userSupportTickets.filter((item) => item.status !== "answered").length,
+        lastSupportTicket?.status ?? "",
+        lastSupportTicket?.createdAt ?? "",
         userProofs.map((item) => item.status).join("|"),
         lastRejectedProof?.rejectReason ?? ""
       ];
@@ -2498,6 +2855,28 @@ async function getPosts(env) {
     if (latest) byId.set(latest.id, latest);
   }
   return [...byId.values()];
+}
+
+async function getSupportTickets(env) {
+  const refs = await getList(env, "support_tickets");
+  const byId = new Map();
+  for (const ref of refs) {
+    const latest = await getJson(env, `support:${ref.id}`);
+    if (latest) byId.set(latest.id, latest);
+  }
+  return [...byId.values()];
+}
+
+async function findProfileForAdmin(env, value) {
+  const text = cleanText(value).replace(/^@/, "").toLowerCase();
+  if (!text) return null;
+
+  const profiles = await getProfiles(env);
+  return profiles.find((profile) => {
+    const username = String(profile.username || "").replace(/^@/, "").toLowerCase();
+    const name = String(profile.name || "").toLowerCase();
+    return String(profile.userId) === text || username === text || name === text;
+  }) || null;
 }
 
 async function getAvailablePublishDates(env, scheduleKind, limit = 8) {
