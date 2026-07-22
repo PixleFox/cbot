@@ -1,7 +1,7 @@
 const CHANNEL_USERNAME = "@cucksclub";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
-const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-collage.png";
+const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-v2.png";
 const QUESTION_COUNT = 18;
 const MAX_TEXT_LENGTH = 2800;
 const MAX_PHOTO_CAPTION_LENGTH = 900;
@@ -569,6 +569,11 @@ async function handleMessage(message, env) {
     return;
   }
 
+  if (state?.mode === "proof_instagram") {
+    await handleProofInstagram(env, message, state, text);
+    return;
+  }
+
   if (state?.mode === "release_voice") {
     await handleReleaseVoice(env, message, state);
     return;
@@ -692,6 +697,11 @@ async function handleCallback(query, env) {
 
   if (data === "proof:rel_done") {
     await finishProofRelationshipSelection(env, query);
+    return;
+  }
+
+  if (data.startsWith("proof:aware:")) {
+    await finishProofPartnerAwareness(env, query, data.replace("proof:aware:", ""));
     return;
   }
 
@@ -1097,10 +1107,25 @@ async function startCuckoldProof(env, chatId, userId) {
     [
       "🧾 اثبات کاکولدی",
       "",
-      "این مرحله برای اینه که فضای کلاب امن و قابل اعتماد بمونه.",
-      "فایل‌ها فقط برای بررسی ادمین استفاده می‌شن و بعد از تایید یا رد، شناسه فایل‌ها از حافظه ربات پاک می‌شه.",
+      "❇️ مزیت‌های ثبت‌نام به عنوان کاکولد",
       "",
-      "لطفاً با آرامش جلو برو؛ کیفیت، وضوح و رعایت نکات اخلاقی خیلی مهمه.",
+      "1⃣ فقط یک‌بار اثبات می‌دی و آیدی تلگرام و اینستاگرامت به عنوان تایید شده ثبت می‌شه.",
+      "2⃣ سرویس ساخت ویدیو با سناریوی شما و چهره فرد مورد نظرتان سریع‌تر انجام می‌شود.",
+      "3⃣ سرویس تخلیه آب بیغیرتی فوری، بدون درخواست اطلاعات اضافه، برای شما انجام می‌شود.",
+      "4⃣ سرویس جق روی عکس ارسالی شما فعال می‌شود؛ عکس به بول‌ها داده می‌شود و ویدیو برای شما ارسال می‌شود.",
+      "5⃣ عکس شما می‌تواند در کانال و استوری اینستاگرام به صورت اختصاصی منتشر شود و کامنت بگیرد.",
+      "6⃣ امکان عضویت در گروه گپ و تبادل عکس با اعضای کاکولد را خواهید داشت.",
+      "7⃣ با ادمین مستقیم در ارتباط خواهید بود.",
+      "",
+      "🟪 شرط‌های اولیه ثبت‌نام کاکولدی",
+      "",
+      "1⃣ باید متاهل باشید یا رابطه پایدار داشته باشید.",
+      "2⃣ فرم را دقیق و بدون اطلاعات فیک تکمیل کنید.",
+      "3⃣ تا تایید اطلاعات صبر کنید.",
+      "",
+      "❇️ جمع کردن افراد با گرایش کاکولدی دور هم کار ساده‌ای نیست و احراز افراد هم زمان و انرژی می‌برد. لطفاً تا جای ممکن از ارسال عکس فیک، اطلاعات فیک و موارد مشابه خودداری کنید و اخلاق را رعایت کنید.",
+      "",
+      "🟡 توجه: عضویت و همه موارد پایه رایگان است.",
       "",
       "۱) روی چه شخصی کاکولد هستی؟ می‌توانی چند گزینه را انتخاب کنی:"
     ].join("\n"),
@@ -1185,18 +1210,23 @@ async function finishProofRelationshipSelection(env, query) {
   }
 
   await setState(env, userId, {
-    mode: "proof_voice",
-    relationships: state.selected
+    mode: "proof_selfie",
+    relationships: state.selected,
+    target: proofTargetLabel(state.selected)
   });
   await sendMessage(
     env,
     chatId,
     [
-      "🎙 مرحله ۲: وویس فانتزی",
+      "❇️ دریافت اثبات ۱",
       "",
-      "فانتزی کاکولدی‌ات را با وویس توضیح بده.",
-      "بگو چه صحنه‌ای بیشتر تحریک‌ات می‌کند و چرا.",
-      "وویس باید بین ۵ تا ۱۸۰ ثانیه باشد."
+      "لطفاً یک عکس/فیلم دو نفره از خودت و پارتنرت جهت اثبات ارسال کن.",
+      "",
+      "🟡 توجه: عکس یا فیلم بدون چهره قابلیت احراز ندارد، چون ممکن است از اینترنت پیدا شده باشد و اثبات محسوب نمی‌شود.",
+      "",
+      "🔓 جهت حفظ حریم شخصی شما، پس از تایید یا رد درخواست، فایل ارسالی از حافظه ربات پاک می‌شود.",
+      "",
+      "✅ عکس/فیلم را ترجیحاً به صورت فایل ارسال کن تا کیفیت آن کاهش پیدا نکند."
     ].join("\n"),
     keyboard(BACK_TO_MENU)
   );
@@ -1224,27 +1254,99 @@ async function handleProofVoice(env, message, state) {
     return;
   }
 
-  const target = proofTargetLabel(state.relationships);
   await setState(env, userId, {
-    mode: "proof_selfie",
-    relationships: state.relationships,
+    ...state,
+    mode: "proof_instagram",
     voiceFileId: voice.file_id,
-    voiceDuration: voice.duration,
-    target
+    voiceDuration: voice.duration
   });
   await sendMessage(
     env,
     chatId,
     [
-      "📷 مرحله ۳: عکس دو نفره",
+      "📷 اینستاگرام",
       "",
-      `یک عکس دو نفره از خودت کنار ${target} بفرست.`,
-      "چهره‌ها مشخص، کیفیت خوب، نور مناسب.",
+      "لطفاً آیدی یا یوزرنیم اینستاگرام خودت را ارسال کن.",
+      "برای ارتباط مستقیم در اینستاگرام استفاده می‌شود.",
       "",
-      "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
+      "مثال: @cucksclub"
     ].join("\n"),
     keyboard(BACK_TO_MENU)
   );
+}
+
+async function handleProofInstagram(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const instagram = normalizeInstagramUsername(text);
+  if (!instagram) {
+    await sendMessage(env, chatId, "❌ آیدی اینستاگرام معتبر نیست.\n\nمثال درست: @cucksclub", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  await setState(env, userId, {
+    ...state,
+    mode: "proof_partner_awareness",
+    instagram
+  });
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "آیا پارتنر/همسر شما از کاکولدی شما باخبر است؟",
+      "",
+      "یکی از گزینه‌ها را انتخاب کن:"
+    ].join("\n"),
+    keyboard([
+      [{ text: "بله، می‌داند و همکاری می‌کند", callback_data: "proof:aware:knows_cooperates" }],
+      [{ text: "بله، می‌داند ولی همکاری نمی‌کند", callback_data: "proof:aware:knows_no_coop" }],
+      [{ text: "نمی‌داند", callback_data: "proof:aware:does_not_know" }],
+      ...BACK_TO_MENU
+    ])
+  );
+}
+
+async function finishProofPartnerAwareness(env, query, awareness) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  const allowed = ["knows_cooperates", "knows_no_coop", "does_not_know"];
+  if (!state || state.mode !== "proof_partner_awareness" || !allowed.includes(awareness)) {
+    await sendMessage(env, chatId, "برای ثبت اثبات، دوباره از منو شروع کن.", keyboard(await getMainMenuForUser(env, userId)));
+    await clearState(env, userId);
+    return;
+  }
+
+  const profile = await getProfile(env, userId);
+  const proofId = shortId();
+  const proof = {
+    id: proofId,
+    proofType: "cuckold",
+    userId,
+    username: query.from.username || "",
+    firstName: query.from.first_name || "",
+    relationships: state.relationships,
+    instagram: state.instagram,
+    partnerAwareness: awareness,
+    voiceFileId: state.voiceFileId,
+    voiceDuration: state.voiceDuration,
+    proofMedia1Kind: state.proofMedia1Kind,
+    proofMedia1FileId: state.proofMedia1FileId,
+    proofMedia2Kind: state.proofMedia2Kind,
+    proofMedia2FileId: state.proofMedia2FileId,
+    proofMedia3Kind: state.proofMedia3Kind,
+    proofMedia3FileId: state.proofMedia3FileId,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+
+  await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
+  await putListItem(env, "proofs", proof);
+  await clearState(env, userId);
+
+  await sendMessage(env, chatId, "✅ اطلاعات ثبت شد و برای بررسی ادمین ارسال شد.\n\nنتیجه همین‌جا اعلام می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+  await sendProofToAdmin(env, proof, profile, query.from);
 }
 
 async function saveHotwifeProof(env, message, state, voice) {
@@ -1275,28 +1377,33 @@ async function saveHotwifeProof(env, message, state, voice) {
 async function handleProofSelfie(env, message, state) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
-  if (!message.photo?.length) {
-    await sendMessage(env, chatId, "❌ لطفاً یک عکس معمولی و غیرصریح بفرست.", keyboard(BACK_TO_MENU));
+  const media = normalizeProofMedia(message);
+  if (!media.ok) {
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nلطفاً عکس/فیلم دو نفره معتبر بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
 
-  const profile = await getProfile(env, userId);
-  const photo = message.photo[message.photo.length - 1];
   await setState(env, userId, {
     ...state,
     mode: "proof_partner_hijab",
-    selfiePhotoFileId: photo.file_id
+    proofMedia1Kind: media.kind,
+    proofMedia1FileId: media.fileId
   });
 
   await sendMessage(
     env,
     chatId,
     [
-      "🧕 مرحله ۴: عکس با حجاب",
+      "❇️ دریافت اثبات ۲",
       "",
-      `یک عکس با حجاب از ${state.target || proofTargetLabel(state.relationships)} بفرست.`,
-      "کیفیت خوب، چهره واضح، نکات اخلاقی رعایت شود.",
-      "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
+      "لطفاً یک عکس/فیلم با حجاب از پارتنر خودت ارسال کن.",
+      "",
+      "🟡 عکس بدون چهره قابلیت احراز ندارد.",
+      "🟡 این فایل نباید تکراری یا همان فایل قبلی باشد.",
+      "",
+      "🔓 جهت حفظ حریم شخصی شما، پس از تایید یا رد درخواست، فایل ارسالی از حافظه ربات پاک می‌شود.",
+      "",
+      "✅ عکس/فیلم را ترجیحاً به صورت فایل ارسال کن تا کیفیت آن کاهش پیدا نکند."
     ].join("\n"),
     keyboard(BACK_TO_MENU)
   );
@@ -1305,27 +1412,34 @@ async function handleProofSelfie(env, message, state) {
 async function handleProofPartnerHijab(env, message, state) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
-  if (!message.photo?.length) {
-    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.", keyboard(BACK_TO_MENU));
+  const media = normalizeProofMedia(message);
+  if (!media.ok) {
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nلطفاً عکس/فیلم با حجاب معتبر بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
 
-  const photo = message.photo[message.photo.length - 1];
   await setState(env, userId, {
     ...state,
     mode: "proof_partner_no_hijab",
-    partnerHijabPhotoFileId: photo.file_id
+    proofMedia2Kind: media.kind,
+    proofMedia2FileId: media.fileId
   });
 
   await sendMessage(
     env,
     chatId,
     [
-      "💫 مرحله ۵: عکس بدون حجاب",
+      "❇️ دریافت اثبات ۳",
       "",
-      `یک عکس بدون حجاب از ${state.target || proofTargetLabel(state.relationships)} بفرست.`,
-      "کیفیت خوب، چهره واضح، نکات اخلاقی رعایت شود.",
-      "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
+      "لطفاً یک عکس/فیلم جذاب با لباس سکسی از پارتنر خودت ارسال کن.",
+      "",
+      "🟡 عکس بدون چهره قابلیت احراز ندارد.",
+      "🟡 این فایل نباید تکراری یا همان فایل‌های قبلی باشد.",
+      "🟪 این اثبات برای این گرفته می‌شود که مشخص شود فایل واقعاً مربوط به رابطه شماست، نه یک عکس عمومی یا دانلودی.",
+      "",
+      "🔓 جهت حفظ حریم شخصی شما، پس از تایید یا رد درخواست، فایل ارسالی از حافظه ربات پاک می‌شود.",
+      "",
+      "✅ عکس/فیلم را ترجیحاً به صورت فایل ارسال کن تا کیفیت آن کاهش پیدا نکند."
     ].join("\n"),
     keyboard(BACK_TO_MENU)
   );
@@ -1334,35 +1448,32 @@ async function handleProofPartnerHijab(env, message, state) {
 async function handleProofPartnerNoHijab(env, message, state) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
-  if (!message.photo?.length) {
-    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.", keyboard(BACK_TO_MENU));
+  const media = normalizeProofMedia(message);
+  if (!media.ok) {
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nلطفاً عکس/فیلم جذاب معتبر بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
 
-  const profile = await getProfile(env, userId);
-  const proofId = shortId();
-  const photo = message.photo[message.photo.length - 1];
-  const proof = {
-    id: proofId,
-    userId,
-    username: message.from.username || "",
-    firstName: message.from.first_name || "",
-    relationships: state.relationships,
-    voiceFileId: state.voiceFileId,
-    voiceDuration: state.voiceDuration,
-    selfiePhotoFileId: state.selfiePhotoFileId,
-    partnerHijabPhotoFileId: state.partnerHijabPhotoFileId,
-    partnerNoHijabPhotoFileId: photo.file_id,
-    status: "pending",
-    createdAt: new Date().toISOString()
-  };
+  await setState(env, userId, {
+    ...state,
+    mode: "proof_voice",
+    proofMedia3Kind: media.kind,
+    proofMedia3FileId: media.fileId
+  });
 
-  await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
-  await putListItem(env, "proofs", proof);
-  await clearState(env, userId);
-
-  await sendMessage(env, chatId, "✅ اطلاعات ثبت شد و منتظر تایید ادمین بمان.", keyboard(await getMainMenuForUser(env, userId)));
-  await sendProofToAdmin(env, proof, profile, message.from);
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "💟 فانتزی کاکولدی",
+      "",
+      "لطفاً فانتزی خودت رو به صورت وویس 🎙 بفرست.",
+      "",
+      "⚠️ نوشتن فانتزی مورد قبول نیست؛ فقط وویس.",
+      "وویس باید بین ۵ تا ۱۸۰ ثانیه باشد."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
 }
 
 async function sendProofToAdmin(env, proof, profile, user) {
@@ -1383,15 +1494,17 @@ async function sendProofToAdmin(env, proof, profile, user) {
       `نام ثبت‌نام: ${profile?.name || "-"}`,
       `سن: ${profile?.age || "-"}`,
       `شهر: ${profile?.city || "-"}`,
-      isHotwife ? "نوع اثبات: وویس هاتوایفی" : `گزینه‌ها: ${proof.relationships.map(proofRelationshipLabel).join("، ")}`
+      isHotwife ? "نوع اثبات: وویس هاتوایفی" : `گزینه‌ها: ${proof.relationships.map(proofRelationshipLabel).join("، ")}`,
+      isHotwife ? "" : `اینستاگرام: ${proof.instagram || "-"}`,
+      isHotwife ? "" : `اطلاع پارتنر: ${partnerAwarenessLabel(proof.partnerAwareness)}`
     ].join("\n")
   );
   await sendVoice(env, env.ADMIN_CHAT_ID, proof.voiceFileId, `🎙 وویس اثبات - کد ${proof.id}`, isHotwife ? controls : {});
   if (isHotwife) return;
 
-  await sendPhoto(env, env.ADMIN_CHAT_ID, proof.selfiePhotoFileId, `📷 عکس ۱: دو نفره - کد ${proof.id}`);
-  await sendPhoto(env, env.ADMIN_CHAT_ID, proof.partnerHijabPhotoFileId, `🧕 عکس ۲: با حجاب - کد ${proof.id}`);
-  await sendPhoto(env, env.ADMIN_CHAT_ID, proof.partnerNoHijabPhotoFileId, `💫 عکس ۳: بدون حجاب - کد ${proof.id}`, controls);
+  await sendProofMedia(env, env.ADMIN_CHAT_ID, proof.proofMedia1Kind || "photo", proof.proofMedia1FileId || proof.selfiePhotoFileId, `📷 اثبات ۱: دو نفره - کد ${proof.id}`);
+  await sendProofMedia(env, env.ADMIN_CHAT_ID, proof.proofMedia2Kind || "photo", proof.proofMedia2FileId || proof.partnerHijabPhotoFileId, `🧕 اثبات ۲: با حجاب - کد ${proof.id}`);
+  await sendProofMedia(env, env.ADMIN_CHAT_ID, proof.proofMedia3Kind || "photo", proof.proofMedia3FileId || proof.partnerNoHijabPhotoFileId, `💫 اثبات ۳: جذاب - کد ${proof.id}`, controls);
 }
 
 async function approveProof(env, query, proofId) {
@@ -1411,6 +1524,9 @@ async function approveProof(env, query, proofId) {
   proof.selfiePhotoFileId = "";
   proof.partnerHijabPhotoFileId = "";
   proof.partnerNoHijabPhotoFileId = "";
+  proof.proofMedia1FileId = "";
+  proof.proofMedia2FileId = "";
+  proof.proofMedia3FileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
   await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "approved", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy }));
 
@@ -1474,6 +1590,9 @@ async function rejectProofWithReason(env, query, proofId, reason) {
   proof.selfiePhotoFileId = "";
   proof.partnerHijabPhotoFileId = "";
   proof.partnerNoHijabPhotoFileId = "";
+  proof.proofMedia1FileId = "";
+  proof.proofMedia2FileId = "";
+  proof.proofMedia3FileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
   await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "rejected", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy, rejectReason: finalReason }));
 
@@ -2920,7 +3039,7 @@ async function exportComprehensive(env, chatId) {
   const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "hotwife_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_reject_reason"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "hotwife_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_instagram", "last_proof_partner_awareness", "last_proof_reject_reason"],
     ...profiles.map((profile) => {
       const userTests = tests.filter((item) => item.userId === profile.userId);
       const lastTest = userTests[userTests.length - 1];
@@ -2929,6 +3048,7 @@ async function exportComprehensive(env, chatId) {
       const userSupportTickets = supportTickets.filter((item) => item.userId === profile.userId);
       const lastSupportTicket = userSupportTickets[userSupportTickets.length - 1];
       const userProofs = proofs.filter((item) => item.userId === profile.userId);
+      const lastProof = userProofs[userProofs.length - 1];
       const lastRejectedProof = [...userProofs].reverse().find((item) => item.rejectReason);
       return [
         profile.userId,
@@ -2968,6 +3088,8 @@ async function exportComprehensive(env, chatId) {
         lastSupportTicket?.status ?? "",
         lastSupportTicket?.createdAt ?? "",
         userProofs.map((item) => item.status).join("|"),
+        lastProof?.instagram ?? "",
+        partnerAwarenessLabel(lastProof?.partnerAwareness),
         lastRejectedProof?.rejectReason ?? ""
       ];
     })
@@ -2988,6 +3110,41 @@ function normalizeMediaFile(message) {
   }
 
   return { ok: false, error: "نوع فایل درست نیست." };
+}
+
+function normalizeProofMedia(message) {
+  if (message.photo?.length) {
+    const largestPhoto = message.photo[message.photo.length - 1];
+    return { ok: true, kind: "photo", fileId: largestPhoto.file_id };
+  }
+
+  if (message.video?.file_id) {
+    if (message.video.duration > 300) return { ok: false, error: "ویدئو باید حداکثر ۵ دقیقه باشد." };
+    return { ok: true, kind: "video", fileId: message.video.file_id };
+  }
+
+  const document = message.document;
+  if (document?.file_id) {
+    const mime = document.mime_type || "";
+    if (mime.startsWith("image/")) return { ok: true, kind: "document", fileId: document.file_id };
+    if (mime.startsWith("video/")) return { ok: true, kind: "document", fileId: document.file_id };
+    return { ok: false, error: "فایل باید عکس یا ویدئو باشد." };
+  }
+
+  return { ok: false, error: "نوع فایل درست نیست." };
+}
+
+async function sendProofMedia(env, chatId, kind, fileId, caption, extra = {}) {
+  if (!fileId) return;
+  if (kind === "video") {
+    await sendVideo(env, chatId, fileId, caption, extra);
+    return;
+  }
+  if (kind === "document") {
+    await sendDocumentFile(env, chatId, fileId, caption, extra);
+    return;
+  }
+  await sendPhoto(env, chatId, fileId, caption, extra);
 }
 
 function buildMediaCaption(caption, kind = "photo") {
@@ -3370,6 +3527,22 @@ function proofTargetLabel(relationships = []) {
   return proofRelationshipLabel(selected);
 }
 
+function partnerAwarenessLabel(value) {
+  const labels = {
+    knows_cooperates: "بله، می‌داند و همکاری می‌کند",
+    knows_no_coop: "بله، می‌داند ولی همکاری نمی‌کند",
+    does_not_know: "نمی‌داند"
+  };
+  return labels[value] || "-";
+}
+
+function normalizeInstagramUsername(value) {
+  const text = cleanText(value).replace(/^https?:\/\/(www\.)?instagram\.com\//i, "").replace(/\/+$/g, "");
+  const username = text.replace(/^@/, "");
+  if (!/^[A-Za-z0-9._]{2,30}$/.test(username)) return "";
+  return `@${username}`;
+}
+
 function countUrls(value) {
   return (String(value).match(/https?:\/\/|t\.me\/|telegram\.me\//gi) || []).length;
 }
@@ -3674,6 +3847,15 @@ async function sendVoice(env, chatId, voice, caption, extra = {}) {
   return telegram(env, "sendVoice", {
     chat_id: chatId,
     voice,
+    caption,
+    ...extra
+  });
+}
+
+async function sendDocumentFile(env, chatId, document, caption, extra = {}) {
+  return telegram(env, "sendDocument", {
+    chat_id: chatId,
+    document,
     caption,
     ...extra
   });
