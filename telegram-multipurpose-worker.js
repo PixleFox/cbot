@@ -8,6 +8,18 @@ const POST_COOLDOWN_SECONDS = 90;
 const BOOKING_COOLDOWN_SECONDS = 60;
 const TEST_COOLDOWN_SECONDS = 60;
 const REMINDER_WINDOW_MINUTES = 30;
+const DEFAULT_POST_HOUR = 17;
+const DEFAULT_POST_MINUTE = 48;
+const POST_REJECT_REASONS = {
+  low_quality: "کیفیت نامناسب عکس یا فیلم",
+  ethics: "عدم رعایت نکات اخلاقی در محتوا",
+  not_attractive: "عدم جذابیت لازم محتوا"
+};
+const PROOF_REJECT_REASONS = {
+  low_quality: "کیفیت عکس‌ها یا وویس قابل قبول نیست",
+  incomplete: "اطلاعات یا فایل‌های ارسالی کامل نیست",
+  mismatch: "اطلاعات ارسالی با ثبت‌نام همخوانی ندارد"
+};
 
 const QUESTIONS = [
   {
@@ -334,7 +346,7 @@ const TEST_TYPES = [
 const MAIN_MENU = [
   [{ text: "🧪 تست غیرت", callback_data: "menu:test" }],
   [{ text: "📅 نوبت مشاوره", callback_data: "menu:booking" }],
-  [{ text: "🖼 ارسال عکس", callback_data: "post:type:media" }],
+  [{ text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" }],
   [{ text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }],
   [{ text: "🔞 عضویت در گروه VIP کاکولدی", callback_data: "vip:join" }],
   [{ text: "💧 تخلیه آب بیغیرتی", callback_data: "release:start" }],
@@ -375,7 +387,7 @@ const USER_TYPE_LABELS = {
 };
 
 const POST_TYPE_MENU = [
-  [{ text: "🖼 ارسال عکس در کانال", callback_data: "post:type:media" }],
+  [{ text: "🎬 ارسال عکس و فیلم در کانال", callback_data: "post:type:media" }],
   [{ text: "✍️ ارسال اعترافات در کانال", callback_data: "post:type:confession" }],
   [{ text: "↩️ برگشت", callback_data: "menu:help" }]
 ];
@@ -419,7 +431,8 @@ export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(Promise.all([
       sendDueBookingReminders(env),
-      sendDueReleaseReminders(env)
+      sendDueReleaseReminders(env),
+      publishDuePosts(env)
     ]));
   }
 };
@@ -467,6 +480,16 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "admin_broadcast_text") {
     await finishBroadcastText(env, message, text);
+    return;
+  }
+
+  if (state?.mode === "admin_reject_post_custom") {
+    await finishCustomPostReject(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "admin_reject_proof_custom") {
+    await finishCustomProofReject(env, message, state, text);
     return;
   }
 
@@ -609,7 +632,20 @@ async function handleCallback(query, env) {
 
   if (data.startsWith("proof:reject:")) {
     if (!isAdmin(env, userId)) return;
-    await rejectProof(env, query, data.replace("proof:reject:", ""));
+    await askProofRejectReason(env, query, data.replace("proof:reject:", ""));
+    return;
+  }
+
+  if (data.startsWith("proof:reject_reason:")) {
+    if (!isAdmin(env, userId)) return;
+    const [, , proofId, reasonKey] = data.split(":");
+    await rejectProofWithReason(env, query, proofId, PROOF_REJECT_REASONS[reasonKey] || "");
+    return;
+  }
+
+  if (data.startsWith("proof:reject_custom:")) {
+    if (!isAdmin(env, userId)) return;
+    await startCustomProofReject(env, query, data.replace("proof:reject_custom:", ""));
     return;
   }
 
@@ -686,13 +722,33 @@ async function handleCallback(query, env) {
 
   if (data.startsWith("post:approve:")) {
     if (!isAdmin(env, userId)) return;
-    await approvePost(env, query, data.replace("post:approve:", ""));
+    await askPostPublishDate(env, query, data.replace("post:approve:", ""));
     return;
   }
 
   if (data.startsWith("post:reject:")) {
     if (!isAdmin(env, userId)) return;
-    await rejectPost(env, query, data.replace("post:reject:", ""));
+    await askPostRejectReason(env, query, data.replace("post:reject:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:reject_reason:")) {
+    if (!isAdmin(env, userId)) return;
+    const [, , postId, reasonKey] = data.split(":");
+    await rejectPostWithReason(env, query, postId, POST_REJECT_REASONS[reasonKey] || "");
+    return;
+  }
+
+  if (data.startsWith("post:reject_custom:")) {
+    if (!isAdmin(env, userId)) return;
+    await startCustomPostReject(env, query, data.replace("post:reject_custom:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:schedule:")) {
+    if (!isAdmin(env, userId)) return;
+    const [, , postId, dateKey] = data.split(":");
+    await schedulePost(env, query, postId, dateKey);
     return;
   }
 
@@ -751,7 +807,7 @@ async function sendHelp(env, chatId) {
       "ℹ️ راهنما",
       "",
       "برای فعال شدن امکانات باید ثبت‌نام را کامل کنی.",
-      "بعد از ثبت‌نام، تست غیرت، نوبت مشاوره، ارسال عکس و ارسال اعتراف فعال می‌شود.",
+      "بعد از ثبت‌نام، تست غیرت، نوبت مشاوره، ارسال عکس و فیلم، و ارسال اعتراف فعال می‌شود.",
       "عضویت VIP و تخلیه آب بیغیرتی فقط برای کاکولدهای تایید شده فعال است.",
       "",
       "لغو هر مسیر: /cancel"
@@ -1168,7 +1224,7 @@ async function approveProof(env, query, proofId) {
   await sendMessage(env, chatId, `✅ درخواست تایید شد.\nکد: ${proofId}`);
 }
 
-async function rejectProof(env, query, proofId) {
+async function askProofRejectReason(env, query, proofId) {
   const chatId = String(query.message.chat.id);
   if (!isAdmin(env, String(query.from.id))) return;
 
@@ -1178,18 +1234,68 @@ async function rejectProof(env, query, proofId) {
     return;
   }
 
+  await sendMessage(env, chatId, `❌ دلیل رد شدن اثبات را انتخاب کن:\n\nکد: ${proofId}`, keyboard([
+    [{ text: "کیفیت فایل‌ها قابل قبول نیست", callback_data: `proof:reject_reason:${proofId}:low_quality` }],
+    [{ text: "اطلاعات یا فایل‌ها کامل نیست", callback_data: `proof:reject_reason:${proofId}:incomplete` }],
+    [{ text: "عدم همخوانی اطلاعات", callback_data: `proof:reject_reason:${proofId}:mismatch` }],
+    [{ text: "✍️ نوشتن دلیل دلخواه", callback_data: `proof:reject_custom:${proofId}` }]
+  ]));
+}
+
+async function rejectProofWithReason(env, query, proofId, reason) {
+  const chatId = String(query.message.chat.id);
+  if (!isAdmin(env, String(query.from.id))) return;
+
+  const proof = await getJson(env, `proof:${proofId}`);
+  if (!proof || proof.status !== "pending") {
+    await sendMessage(env, chatId, "این درخواست پیدا نشد یا قبلاً بررسی شده.");
+    return;
+  }
+  const finalReason = cleanText(reason);
+  if (!finalReason) {
+    await sendMessage(env, chatId, "دلیل رد شدن خالی است.");
+    return;
+  }
+
   proof.status = "rejected";
   proof.reviewedAt = new Date().toISOString();
   proof.reviewedBy = String(query.from.id);
+  proof.rejectReason = finalReason;
   proof.voiceFileId = "";
   proof.selfiePhotoFileId = "";
   proof.partnerHijabPhotoFileId = "";
   proof.partnerNoHijabPhotoFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
-  await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "rejected", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy }));
+  await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "rejected", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy, rejectReason: finalReason }));
 
-  await sendMessage(env, proof.userId, "❌ درخواست اثبات کاکولدی تایید نشد.");
-  await sendMessage(env, chatId, `❌ درخواست رد شد.\nکد: ${proofId}`);
+  await sendMessage(env, proof.userId, ["❌ درخواست اثبات کاکولدی تایید نشد.", "", `دلیل: ${finalReason}`].join("\n"), keyboard(BACK_TO_MENU));
+  await sendMessage(env, chatId, `❌ درخواست رد شد.\nکد: ${proofId}\nدلیل: ${finalReason}`);
+}
+
+async function startCustomProofReject(env, query, proofId) {
+  const chatId = String(query.message.chat.id);
+  if (!isAdmin(env, String(query.from.id))) return;
+
+  const proof = await getJson(env, `proof:${proofId}`);
+  if (!proof || proof.status !== "pending") {
+    await sendMessage(env, chatId, "این درخواست پیدا نشد یا قبلاً بررسی شده.");
+    return;
+  }
+  await setState(env, String(query.from.id), { mode: "admin_reject_proof_custom", proofId });
+  await sendMessage(env, chatId, `✍️ دلیل رد شدن اثبات را بنویس:\n\nکد: ${proofId}\nلغو: /cancel`);
+}
+
+async function finishCustomProofReject(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+  const reason = cleanText(text);
+  if (reason.length < 3 || reason.length > 500) {
+    await sendMessage(env, chatId, "❌ دلیل باید بین ۳ تا ۵۰۰ کاراکتر باشد. دوباره بنویس:");
+    return;
+  }
+  await clearState(env, userId);
+  await rejectProofWithReason(env, { message, from: message.from }, state.proofId, reason);
 }
 
 async function startTest(env, chatId, userId) {
@@ -1583,7 +1689,7 @@ async function startPostSubmission(env, chatId, userId) {
       "",
       "نوع پست را انتخاب کن:",
       "",
-      "🖼 عکس: اول فایل، بعد کپشن",
+      "🎬 عکس یا فیلم: اول فایل، بعد کپشن",
       "✍️ اعترافات: فقط متن، حداقل ۱۰ کلمه"
     ].join("\n"),
     keyboard(POST_TYPE_MENU)
@@ -1596,9 +1702,9 @@ async function startMediaPost(env, chatId, userId) {
     env,
     chatId,
     [
-      "🖼 ارسال عکس",
+      "🎬 ارسال عکس و فیلم",
       "",
-      "اول خود عکس را بفرست.",
+      "اول خود عکس یا فیلم را بفرست.",
       "بعد از دریافت فایل، کپشن را جداگانه می‌پرسم.",
       "",
       "لغو: /cancel"
@@ -1628,7 +1734,7 @@ async function handleMediaPostFile(env, message) {
   const media = normalizeMediaFile(message);
 
   if (!media.ok) {
-    await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس بفرست.`);
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس یا فیلم تلگرام بفرست.`);
     return;
   }
 
@@ -1655,7 +1761,7 @@ async function handleMediaPostCaption(env, message, state, text) {
     kind: state.media.kind,
     fileId: state.media.fileId,
     rawText: caption,
-    finalText: buildMediaCaption(caption)
+    finalText: buildMediaCaption(caption, state.media.kind)
   };
 
   await savePostAndPreview(env, message, post);
@@ -1710,6 +1816,7 @@ async function savePostAndPreview(env, message, post) {
     finalText: post.finalText,
     fileId: post.fileId || "",
     status: "pending",
+    scheduleKind: getPostScheduleKind(post.kind),
     createdAt: new Date().toISOString()
   };
 
@@ -1735,7 +1842,7 @@ async function sendAdminPostPreview(env, post, user) {
 
   await sendMessage(env, env.ADMIN_CHAT_ID, adminText);
   const controls = keyboard([[
-    { text: "✅ تایید و ارسال", callback_data: `post:approve:${post.id}` },
+    { text: "✅ تایید و زمان‌بندی", callback_data: `post:approve:${post.id}` },
     { text: "❌ رد", callback_data: `post:reject:${post.id}` }
   ]]);
 
@@ -1752,63 +1859,147 @@ async function sendAdminPostPreview(env, post, user) {
   await sendMessage(env, env.ADMIN_CHAT_ID, post.finalText, controls);
 }
 
-async function approvePost(env, query, postId) {
+async function askPostPublishDate(env, query, postId) {
   const chatId = String(query.message.chat.id);
   const post = await getJson(env, `post:${postId}`);
-  if (!post || post.status !== "pending") {
+  if (!post || !["pending", "approved_waiting_schedule"].includes(post.status)) {
     await sendMessage(env, chatId, "این پست پیدا نشد یا قبلاً بررسی شده.");
     return;
   }
 
-  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
-  try {
-    if (post.kind === "photo") {
-      await sendPhoto(env, targetChannel, post.fileId, post.finalText);
-    } else if (post.kind === "video") {
-      await sendVideo(env, targetChannel, post.fileId, post.finalText);
-    } else {
-      await sendMessage(env, targetChannel, post.finalText);
-    }
-  } catch (error) {
-    await sendMessage(
-      env,
-      chatId,
-      [
-        "❌ ارسال به کانال انجام نشد.",
-        "",
-        `کانال هدف: ${targetChannel}`,
-        "ربات باید داخل کانال ادمین باشد و اجازه Post Messages داشته باشد.",
-        "",
-        String(error?.message || error)
-      ].join("\n")
-    );
+  const options = await getAvailablePublishDates(env, getPostScheduleKind(post.kind), 8);
+  if (!options.length) {
+    await sendMessage(env, chatId, "فعلاً روز آزادی برای زمان‌بندی پیدا نشد. بعداً دوباره تلاش کن.");
     return;
   }
 
-  post.status = "approved";
-  post.approvedAt = new Date().toISOString();
-  post.approvedBy = String(query.from.id);
+  post.status = "approved_waiting_schedule";
+  post.approvedAt = post.approvedAt || new Date().toISOString();
+  post.approvedBy = post.approvedBy || String(query.from.id);
   await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
+  await updateListItem(env, "posts", postId, (item) => ({ ...item, status: post.status, approvedAt: post.approvedAt, approvedBy: post.approvedBy }));
 
-  await sendMessage(env, post.userId, "✅ پستت تایید و در کانال ارسال شد.");
-  await sendMessage(env, chatId, `✅ پست تایید و ارسال شد.\nکد: ${postId}`);
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "✅ پست تایید شد.",
+      "",
+      "حالا روز انتشار را انتخاب کن.",
+      `ساعت انتشار پیش‌فرض: ${pad2(DEFAULT_POST_HOUR)}:${pad2(DEFAULT_POST_MINUTE)} تهران`,
+      "",
+      "روزهایی که همین نوع پست دارند نمایش داده نمی‌شوند."
+    ].join("\n"),
+    keyboard(options.map((option) => [
+      { text: option.label, callback_data: `post:schedule:${postId}:${option.dateKey}` }
+    ]))
+  );
 }
 
-async function rejectPost(env, query, postId) {
+async function schedulePost(env, query, postId, dateKey) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || !["pending", "approved_waiting_schedule"].includes(post.status)) {
+    await sendMessage(env, chatId, "این پست پیدا نشد یا دیگر قابل زمان‌بندی نیست.");
+    return;
+  }
+
+  const scheduleKind = getPostScheduleKind(post.kind);
+  if (await isPublishDateTaken(env, scheduleKind, dateKey, postId)) {
+    await sendMessage(env, chatId, "این روز همین الان پر شده. دوباره تایید را بزن و یک روز آزاد انتخاب کن.");
+    return;
+  }
+
+  const scheduledAt = tehranDateKeyToIso(dateKey, DEFAULT_POST_HOUR, DEFAULT_POST_MINUTE);
+  if (!scheduledAt || Date.parse(scheduledAt) <= Date.now()) {
+    await sendMessage(env, chatId, "این زمان دیگر قابل استفاده نیست. یک روز آینده را انتخاب کن.");
+    return;
+  }
+
+  post.status = "scheduled";
+  post.scheduleKind = scheduleKind;
+  post.scheduledDate = dateKey;
+  post.scheduledAt = scheduledAt;
+  post.scheduledLabel = formatTehranSlot(scheduledAt);
+  post.scheduledBy = String(query.from.id);
+  post.scheduledCreatedAt = new Date().toISOString();
+  await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
+  await updateListItem(env, "posts", postId, (item) => ({
+    ...item,
+    status: "scheduled",
+    scheduleKind,
+    scheduledDate: dateKey,
+    scheduledAt,
+    scheduledLabel: post.scheduledLabel,
+    scheduledBy: post.scheduledBy
+  }));
+
+  await sendMessage(env, post.userId, `✅ پستت تایید شد و برای انتشار زمان‌بندی شد.\n\nزمان انتشار: ${post.scheduledLabel}`);
+  await sendMessage(env, chatId, `✅ زمان‌بندی شد.\nکد: ${postId}\nزمان انتشار: ${post.scheduledLabel}`);
+}
+
+async function askPostRejectReason(env, query, postId) {
   const chatId = String(query.message.chat.id);
   const post = await getJson(env, `post:${postId}`);
   if (!post || post.status !== "pending") {
     await sendMessage(env, chatId, "این پست پیدا نشد یا قبلاً بررسی شده.");
+    return;
+  }
+
+  await sendMessage(env, chatId, `❌ دلیل رد شدن پست را انتخاب کن:\n\nکد: ${postId}`, keyboard([
+    [{ text: "کیفیت نامناسب عکس/فیلم", callback_data: `post:reject_reason:${postId}:low_quality` }],
+    [{ text: "عدم رعایت نکات اخلاقی", callback_data: `post:reject_reason:${postId}:ethics` }],
+    [{ text: "عدم جذابیت لازم", callback_data: `post:reject_reason:${postId}:not_attractive` }],
+    [{ text: "✍️ نوشتن دلیل دلخواه", callback_data: `post:reject_custom:${postId}` }]
+  ]));
+}
+
+async function rejectPostWithReason(env, query, postId, reason) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending") {
+    await sendMessage(env, chatId, "این پست پیدا نشد یا قبلاً بررسی شده.");
+    return;
+  }
+  const finalReason = cleanText(reason);
+  if (!finalReason) {
+    await sendMessage(env, chatId, "دلیل رد شدن خالی است.");
     return;
   }
 
   post.status = "rejected";
   post.rejectedAt = new Date().toISOString();
   post.rejectedBy = String(query.from.id);
+  post.rejectReason = finalReason;
   await env.BOT_KV.put(`post:${postId}`, JSON.stringify(post));
+  await updateListItem(env, "posts", postId, (item) => ({ ...item, status: "rejected", rejectedAt: post.rejectedAt, rejectedBy: post.rejectedBy, rejectReason: finalReason }));
 
-  await sendMessage(env, post.userId, "❌ پستت تایید نشد.");
-  await sendMessage(env, chatId, `❌ پست رد شد.\nکد: ${postId}`);
+  await sendMessage(env, post.userId, ["❌ پستت تایید نشد.", "", `دلیل: ${finalReason}`].join("\n"));
+  await sendMessage(env, chatId, `❌ پست رد شد.\nکد: ${postId}\nدلیل: ${finalReason}`);
+}
+
+async function startCustomPostReject(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending") {
+    await sendMessage(env, chatId, "این پست پیدا نشد یا قبلاً بررسی شده.");
+    return;
+  }
+  await setState(env, String(query.from.id), { mode: "admin_reject_post_custom", postId });
+  await sendMessage(env, chatId, `✍️ دلیل رد شدن پست را بنویس:\n\nکد: ${postId}\nلغو: /cancel`);
+}
+
+async function finishCustomPostReject(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+  const reason = cleanText(text);
+  if (reason.length < 3 || reason.length > 500) {
+    await sendMessage(env, chatId, "❌ دلیل باید بین ۳ تا ۵۰۰ کاراکتر باشد. دوباره بنویس:");
+    return;
+  }
+  await clearState(env, userId);
+  await rejectPostWithReason(env, { message, from: message.from }, state.postId, reason);
 }
 
 async function handleAdminCallback(env, query, data) {
@@ -1890,6 +2081,9 @@ async function handleAdminCallback(env, query, data) {
   if (data === "admin:stats") {
     const bookings = await getList(env, "bookings");
     const posts = await getList(env, "posts");
+    const scheduledPosts = posts.filter((post) => post.status === "scheduled");
+    const publishedPosts = posts.filter((post) => post.status === "published");
+    const rejectedPosts = posts.filter((post) => post.status === "rejected");
     const tests = await getList(env, "test_results");
     const profiles = await getProfiles(env);
     const proofs = await getProofs(env);
@@ -1909,6 +2103,9 @@ async function handleAdminCallback(env, query, data) {
         `نوبت‌های مشاوره: ${bookings.length}`,
         `درخواست‌های تخلیه: ${releases.length}`,
         `پست‌ها: ${posts.length}`,
+        `پست‌های زمان‌بندی‌شده: ${scheduledPosts.length}`,
+        `پست‌های منتشر شده: ${publishedPosts.length}`,
+        `پست‌های رد شده: ${rejectedPosts.length}`,
         `نتایج تست غیرت: ${tests.length}`
       ].join("\n"),
       keyboard(ADMIN_MENU)
@@ -2150,10 +2347,14 @@ async function exportComprehensive(env, chatId) {
   const proofs = await getProofs(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "proof_statuses"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "proof_statuses", "last_proof_reject_reason"],
     ...profiles.map((profile) => {
       const userTests = tests.filter((item) => item.userId === profile.userId);
       const lastTest = userTests[userTests.length - 1];
+      const userPosts = posts.filter((item) => item.userId === profile.userId);
+      const lastPost = userPosts[userPosts.length - 1];
+      const userProofs = proofs.filter((item) => item.userId === profile.userId);
+      const lastRejectedProof = [...userProofs].reverse().find((item) => item.rejectReason);
       return [
         profile.userId,
         profile.name,
@@ -2175,8 +2376,19 @@ async function exportComprehensive(env, chatId) {
         lastTest?.createdAt ?? "",
         bookings.filter((item) => item.userId === profile.userId).length,
         releases.filter((item) => item.userId === profile.userId).length,
-        posts.filter((item) => item.userId === profile.userId).length,
-        proofs.filter((item) => item.userId === profile.userId).map((item) => item.status).join("|")
+        userPosts.length,
+        userPosts.filter((item) => getPostScheduleKind(item.kind) === "media").length,
+        userPosts.filter((item) => item.kind === "confession").length,
+        userPosts.filter((item) => item.status === "scheduled").length,
+        userPosts.filter((item) => item.status === "published").length,
+        userPosts.filter((item) => item.status === "rejected").length,
+        lastPost?.status ?? "",
+        lastPost?.kind ?? "",
+        lastPost?.scheduledAt ?? "",
+        lastPost?.publishedAt ?? "",
+        lastPost?.rejectReason ?? "",
+        userProofs.map((item) => item.status).join("|"),
+        lastRejectedProof?.rejectReason ?? ""
       ];
     })
   ];
@@ -2190,11 +2402,17 @@ function normalizeMediaFile(message) {
     return { ok: true, kind: "photo", fileId: largestPhoto.file_id };
   }
 
+  if (message.video?.file_id) {
+    if (message.video.duration > 300) return { ok: false, error: "ویدئو باید حداکثر ۵ دقیقه باشد." };
+    return { ok: true, kind: "video", fileId: message.video.file_id };
+  }
+
   return { ok: false, error: "نوع فایل درست نیست." };
 }
 
-function buildMediaCaption(caption) {
-  return ["C CLUB", "", "#عکس_ارسالی", cleanText(caption), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`].join("\n");
+function buildMediaCaption(caption, kind = "photo") {
+  const tag = kind === "video" ? "#فیلم_ارسالی" : "#عکس_ارسالی";
+  return ["C CLUB", "", tag, cleanText(caption), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`].join("\n");
 }
 
 function buildConfessionText(text) {
@@ -2206,6 +2424,10 @@ function postTypeLabel(kind) {
   if (kind === "video") return "فیلم";
   if (kind === "confession") return "اعترافات";
   return kind;
+}
+
+function getPostScheduleKind(kind) {
+  return kind === "confession" ? "confession" : "media";
 }
 
 function getTestQuestions(profile) {
@@ -2266,6 +2488,51 @@ async function getOpenSlots(env, limit = 12, purpose = "") {
     .filter((slot) => !slot.startsAt || Date.parse(slot.startsAt) > now)
     .sort((a, b) => Date.parse(a.startsAt || "9999-12-31") - Date.parse(b.startsAt || "9999-12-31"))
     .slice(0, limit);
+}
+
+async function getPosts(env) {
+  const refs = await getList(env, "posts");
+  const byId = new Map();
+  for (const ref of refs) {
+    const latest = await getJson(env, `post:${ref.id}`);
+    if (latest) byId.set(latest.id, latest);
+  }
+  return [...byId.values()];
+}
+
+async function getAvailablePublishDates(env, scheduleKind, limit = 8) {
+  const options = [];
+  const now = Date.now();
+  const todayParts = getTehranParts(new Date());
+
+  for (let offset = 0; options.length < limit && offset < 60; offset += 1) {
+    const utcMs = Date.UTC(
+      todayParts.year,
+      todayParts.month - 1,
+      todayParts.day + offset,
+      DEFAULT_POST_HOUR - 3,
+      DEFAULT_POST_MINUTE - 30,
+      0
+    );
+    const scheduledAt = new Date(utcMs).toISOString();
+    if (Date.parse(scheduledAt) <= now) continue;
+
+    const dateKey = tehranDateKey(scheduledAt);
+    if (await isPublishDateTaken(env, scheduleKind, dateKey)) continue;
+    options.push({ dateKey, label: formatPublishDateLabel(scheduledAt) });
+  }
+
+  return options;
+}
+
+async function isPublishDateTaken(env, scheduleKind, dateKey, exceptPostId = "") {
+  const posts = await getPosts(env);
+  return posts.some((post) => {
+    if (post.id === exceptPostId) return false;
+    if ((post.scheduleKind || getPostScheduleKind(post.kind)) !== scheduleKind) return false;
+    if (post.scheduledDate !== dateKey) return false;
+    return ["scheduled", "publishing", "published", "publish_failed"].includes(post.status);
+  });
 }
 
 async function putListItem(env, listName, item) {
@@ -2430,6 +2697,10 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
 function wordCount(value) {
   return cleanText(value).split(/\s+/).filter(Boolean).length;
 }
@@ -2564,6 +2835,21 @@ function formatTehranSlot(startsAt) {
   }).format(date);
 }
 
+function tehranDateKey(startsAt) {
+  const parts = getTehranParts(new Date(startsAt));
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
+}
+
+function tehranDateKeyToIso(dateKey, hour, minute) {
+  const match = String(dateKey).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "";
+  return makeTehranIso(Number(match[1]), Number(match[2]), Number(match[3]), hour, minute);
+}
+
+function formatPublishDateLabel(startsAt) {
+  return formatTehranSlot(startsAt);
+}
+
 async function sendDueBookingReminders(env) {
   const bookings = await getList(env, "bookings");
   const now = Date.now();
@@ -2635,6 +2921,57 @@ async function sendDueReleaseReminders(env) {
   }
 
   await env.BOT_KV.put("list:release_requests", JSON.stringify(requests));
+}
+
+async function publishDuePosts(env) {
+  const posts = await getPosts(env);
+  const now = Date.now();
+  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
+
+  for (const post of posts) {
+    if (post.status !== "scheduled" || !post.scheduledAt) continue;
+    if (Date.parse(post.scheduledAt) > now) continue;
+
+    post.status = "publishing";
+    post.publishingStartedAt = new Date().toISOString();
+    await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
+    await updateListItem(env, "posts", post.id, (item) => ({ ...item, status: "publishing", publishingStartedAt: post.publishingStartedAt }));
+
+    try {
+      if (post.kind === "photo") {
+        await sendPhoto(env, targetChannel, post.fileId, post.finalText);
+      } else if (post.kind === "video") {
+        await sendVideo(env, targetChannel, post.fileId, post.finalText);
+      } else {
+        await sendMessage(env, targetChannel, post.finalText);
+      }
+
+      post.status = "published";
+      post.publishedAt = new Date().toISOString();
+      await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
+      await updateListItem(env, "posts", post.id, (item) => ({ ...item, status: "published", publishedAt: post.publishedAt }));
+      await sendMessage(env, post.userId, `✅ پستت در کانال منتشر شد.\n\nکد: ${post.id}`);
+      await notifyAdmin(env, `✅ پست زمان‌بندی‌شده منتشر شد.\n\nکد: ${post.id}\nنوع: ${postTypeLabel(post.kind)}`);
+    } catch (error) {
+      post.status = "publish_failed";
+      post.publishError = String(error?.message || error);
+      post.publishErrorAt = new Date().toISOString();
+      await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
+      await updateListItem(env, "posts", post.id, (item) => ({ ...item, status: "publish_failed", publishError: post.publishError, publishErrorAt: post.publishErrorAt }));
+      await safeNotifyAdmin(
+        env,
+        [
+          "⚠️ ارسال پست زمان‌بندی‌شده به کانال ناموفق بود.",
+          "",
+          `کد: ${post.id}`,
+          `کانال هدف: ${targetChannel}`,
+          "ربات باید داخل کانال ادمین باشد و اجازه Post Messages داشته باشد.",
+          "",
+          post.publishError
+        ].join("\n")
+      );
+    }
+  }
 }
 
 function shortId() {
