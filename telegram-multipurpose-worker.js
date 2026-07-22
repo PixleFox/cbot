@@ -929,7 +929,7 @@ async function startRegistration(env, chatId, userId, user) {
       firstName: user.first_name || ""
     }
   });
-  await sendMessage(env, chatId, "📝 ثبت نام\n\nاسم یا اسم مستعار خودت را بفرست:");
+  await sendMessage(env, chatId, "📝 ثبت نام\n\nاسم یا اسم مستعار خودت را بفرست:", keyboard(BACK_TO_MENU));
 }
 
 async function handleRegistrationName(env, message, text) {
@@ -938,7 +938,7 @@ async function handleRegistrationName(env, message, text) {
   const state = await getState(env, userId);
   const error = validateName(text);
   if (error) {
-    await sendMessage(env, chatId, `❌ ${error}\n\nدوباره اسم را بفرست:`);
+    await sendMessage(env, chatId, `❌ ${error}\n\nدوباره اسم را بفرست:`, keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -946,7 +946,7 @@ async function handleRegistrationName(env, message, text) {
     mode: "reg_age",
     profile: { ...state.profile, name: cleanText(text) }
   });
-  await sendMessage(env, chatId, "🎂 سن خودت را به عدد بفرست.\n\nمثال: 29");
+  await sendMessage(env, chatId, "🎂 سن خودت را به عدد بفرست.\n\nمثال: 29", keyboard(BACK_TO_MENU));
 }
 
 async function handleRegistrationAge(env, message, text) {
@@ -955,7 +955,7 @@ async function handleRegistrationAge(env, message, text) {
   const state = await getState(env, userId);
   const age = Number(cleanText(text));
   if (!Number.isInteger(age) || age < 18 || age > 80) {
-    await sendMessage(env, chatId, "❌ سن باید عددی بین ۱۸ تا ۸۰ باشد. دوباره بفرست:");
+    await sendMessage(env, chatId, "❌ سن باید عددی بین ۱۸ تا ۸۰ باشد. دوباره بفرست:", keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -963,7 +963,7 @@ async function handleRegistrationAge(env, message, text) {
     mode: "reg_gender",
     profile: { ...state.profile, age }
   });
-  await sendMessage(env, chatId, "⚧ جنسیت را انتخاب کن:", keyboard(GENDER_MENU));
+  await sendMessage(env, chatId, "⚧ جنسیت را انتخاب کن:", keyboard([...GENDER_MENU, ...BACK_TO_MENU]));
 }
 
 async function handleRegistrationGender(env, query, gender) {
@@ -979,7 +979,7 @@ async function handleRegistrationGender(env, query, gender) {
     mode: "reg_marital",
     profile: { ...state.profile, gender }
   });
-  await sendMessage(env, chatId, "💍 وضعیت تأهل را انتخاب کن:", keyboard(MARITAL_MENU));
+  await sendMessage(env, chatId, "💍 وضعیت تأهل را انتخاب کن:", keyboard([...MARITAL_MENU, ...BACK_TO_MENU]));
 }
 
 async function handleRegistrationMarital(env, query, marital) {
@@ -995,9 +995,9 @@ async function handleRegistrationMarital(env, query, marital) {
     mode: "reg_city",
     profile: { ...state.profile, marital }
   });
-  await sendMessage(env, chatId, "🏙 شهر را انتخاب کن:", keyboard(CITY_OPTIONS.map((city) => [
+  await sendMessage(env, chatId, "🏙 شهر را انتخاب کن:", keyboard([...CITY_OPTIONS.map((city) => [
     { text: city, callback_data: `reg:city:${city}` }
-  ])));
+  ]), ...BACK_TO_MENU]));
 }
 
 async function handleRegistrationCity(env, query, city) {
@@ -1011,7 +1011,7 @@ async function handleRegistrationCity(env, query, city) {
 
   const profile = { ...state.profile, city };
   await setState(env, userId, { mode: "reg_type", profile });
-  await sendMessage(env, chatId, "🔖 نوع را انتخاب کن:", keyboard(getTypeMenu(profile.gender)));
+  await sendMessage(env, chatId, "🔖 نوع را انتخاب کن:", keyboard([...getTypeMenu(profile.gender), ...BACK_TO_MENU]));
 }
 
 async function finishRegistration(env, query, type) {
@@ -1149,7 +1149,8 @@ async function startHotwifeProof(env, chatId, userId) {
       "",
       "وویس باید بین ۲ تا ۶۰ ثانیه باشد.",
       "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
 }
 
@@ -1196,7 +1197,8 @@ async function finishProofRelationshipSelection(env, query) {
       "فانتزی کاکولدی‌ات را با وویس توضیح بده.",
       "بگو چه صحنه‌ای بیشتر تحریک‌ات می‌کند و چرا.",
       "وویس باید بین ۵ تا ۱۸۰ ثانیه باشد."
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
 }
 
@@ -1205,12 +1207,12 @@ async function handleProofVoice(env, message, state) {
   const userId = String(message.from.id);
   const voice = message.voice;
   if (!voice?.file_id) {
-    await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.");
+    await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
   if (state.proofType === "hotwife") {
     if (voice.duration < 2 || voice.duration > 60) {
-      await sendMessage(env, chatId, "❌ وویس اثبات هاتوایفی باید بین ۲ تا ۶۰ ثانیه باشد. دوباره بفرست:");
+      await sendMessage(env, chatId, "❌ وویس اثبات هاتوایفی باید بین ۲ تا ۶۰ ثانیه باشد. دوباره بفرست:", keyboard(BACK_TO_MENU));
       return;
     }
     await saveHotwifeProof(env, message, state, voice);
@@ -1218,7 +1220,7 @@ async function handleProofVoice(env, message, state) {
   }
 
   if (voice.duration < 5 || voice.duration > 180) {
-    await sendMessage(env, chatId, "❌ وویس باید بین ۵ تا ۱۸۰ ثانیه باشد. دوباره بفرست:");
+    await sendMessage(env, chatId, "❌ وویس باید بین ۵ تا ۱۸۰ ثانیه باشد. دوباره بفرست:", keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -1240,7 +1242,8 @@ async function handleProofVoice(env, message, state) {
       "چهره‌ها مشخص، کیفیت خوب، نور مناسب.",
       "",
       "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
 }
 
@@ -1273,7 +1276,7 @@ async function handleProofSelfie(env, message, state) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   if (!message.photo?.length) {
-    await sendMessage(env, chatId, "❌ لطفاً یک عکس معمولی و غیرصریح بفرست.");
+    await sendMessage(env, chatId, "❌ لطفاً یک عکس معمولی و غیرصریح بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -1294,7 +1297,8 @@ async function handleProofSelfie(env, message, state) {
       `یک عکس با حجاب از ${state.target || proofTargetLabel(state.relationships)} بفرست.`,
       "کیفیت خوب، چهره واضح، نکات اخلاقی رعایت شود.",
       "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
 }
 
@@ -1302,7 +1306,7 @@ async function handleProofPartnerHijab(env, message, state) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   if (!message.photo?.length) {
-    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.");
+    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -1322,7 +1326,8 @@ async function handleProofPartnerHijab(env, message, state) {
       `یک عکس بدون حجاب از ${state.target || proofTargetLabel(state.relationships)} بفرست.`,
       "کیفیت خوب، چهره واضح، نکات اخلاقی رعایت شود.",
       "بعد از بررسی ادمین، شناسه فایل از حافظه ربات پاک می‌شود."
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
 }
 
@@ -1330,7 +1335,7 @@ async function handleProofPartnerNoHijab(env, message, state) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   if (!message.photo?.length) {
-    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.");
+    await sendMessage(env, chatId, "❌ لطفاً عکس با کیفیت قابل قبول بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -1522,7 +1527,8 @@ async function startTest(env, chatId, userId) {
       profile?.marital === "single" ? "برای شما فقط ۸ سوال عمومی نمایش داده می‌شود." : "برای شما ۸ سوال عمومی + ۱۰ سوال رابطه نمایش داده می‌شود.",
       "",
       "برای توقف: /cancel"
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
   await sendQuestion(env, chatId, { index: 0, questionIds });
 }
@@ -1540,7 +1546,7 @@ async function sendQuestion(env, chatId, state) {
     env,
     chatId,
     [`🔘 سوال ${index + 1}/${state.questionIds.length}`, "", q.text, "", optionText].join("\n"),
-    keyboard(rows)
+    keyboard([...rows, ...BACK_TO_MENU])
   );
 }
 
@@ -1636,7 +1642,7 @@ async function startBooking(env, chatId, userId) {
   }
 
   await setState(env, userId, { mode: "booking_name" });
-  await sendMessage(env, chatId, "📅 نوبت مشاوره\n\nنام یا اسم مستعار را بفرست.\n\nمثال: Ali\nلغو: /cancel");
+  await sendMessage(env, chatId, "📅 نوبت مشاوره\n\nنام یا اسم مستعار را بفرست.\n\nمثال: Ali\nلغو: /cancel", keyboard(BACK_TO_MENU));
 }
 
 async function handleBookingName(env, message, text) {
@@ -1644,18 +1650,18 @@ async function handleBookingName(env, message, text) {
   const userId = String(message.from.id);
   const error = validateName(text);
   if (error) {
-    await sendMessage(env, chatId, `❌ ${error}\n\nدوباره نام یا اسم مستعار را بفرست:`);
+    await sendMessage(env, chatId, `❌ ${error}\n\nدوباره نام یا اسم مستعار را بفرست:`, keyboard(BACK_TO_MENU));
     return;
   }
   const username = message.from.username ? `@${message.from.username}` : "";
   if (username) {
     await setState(env, userId, { mode: "booking_topic", name: cleanText(text), contact: username });
-    await sendMessage(env, chatId, `✅ آیدی تلگرامت خودکار دریافت شد: ${username}\n\n🧩 موضوع مشاوره را کوتاه بنویس.\n\nحداقل ۱۰ و حداکثر ۵۰۰ کاراکتر.`);
+    await sendMessage(env, chatId, `✅ آیدی تلگرامت خودکار دریافت شد: ${username}\n\n🧩 موضوع مشاوره را کوتاه بنویس.\n\nحداقل ۱۰ و حداکثر ۵۰۰ کاراکتر.`, keyboard(BACK_TO_MENU));
     return;
   }
 
   await setState(env, userId, { mode: "booking_phone", name: cleanText(text) });
-  await sendMessage(env, chatId, "📱 چون آیدی تلگرام قابل دریافت نیست، شماره تماس را بفرست.\n\nمثال: 09121234567");
+  await sendMessage(env, chatId, "📱 چون آیدی تلگرام قابل دریافت نیست، شماره تماس را بفرست.\n\nمثال: 09121234567", keyboard(BACK_TO_MENU));
 }
 
 async function handleBookingPhone(env, message, state, text) {
@@ -1663,11 +1669,11 @@ async function handleBookingPhone(env, message, state, text) {
   const userId = String(message.from.id);
   const error = validatePhone(text);
   if (error) {
-    await sendMessage(env, chatId, `❌ ${error}\n\nشماره تماس معتبر بفرست:`);
+    await sendMessage(env, chatId, `❌ ${error}\n\nشماره تماس معتبر بفرست:`, keyboard(BACK_TO_MENU));
     return;
   }
   await setState(env, userId, { ...state, mode: "booking_topic", contact: cleanText(text) });
-  await sendMessage(env, chatId, "🧩 موضوع مشاوره را کوتاه بنویس.\n\nحداقل ۱۰ و حداکثر ۵۰۰ کاراکتر.");
+  await sendMessage(env, chatId, "🧩 موضوع مشاوره را کوتاه بنویس.\n\nحداقل ۱۰ و حداکثر ۵۰۰ کاراکتر.", keyboard(BACK_TO_MENU));
 }
 
 async function handleBookingTopic(env, message, state, text) {
@@ -1675,7 +1681,7 @@ async function handleBookingTopic(env, message, state, text) {
   const userId = String(message.from.id);
   const error = validateTopic(text);
   if (error) {
-    await sendMessage(env, chatId, `❌ ${error}\n\nموضوع را دوباره بفرست:`);
+    await sendMessage(env, chatId, `❌ ${error}\n\nموضوع را دوباره بفرست:`, keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -1687,9 +1693,9 @@ async function handleBookingTopic(env, message, state, text) {
   }
 
   await setState(env, userId, { ...state, mode: "booking_slot", topic: cleanText(text) });
-  await sendMessage(env, chatId, "🗓 یکی از زمان‌های آزاد را انتخاب کن:", keyboard(slots.slice(0, 12).map((slot) => [
+  await sendMessage(env, chatId, "🗓 یکی از زمان‌های آزاد را انتخاب کن:", keyboard([...slots.slice(0, 12).map((slot) => [
     { text: slot.label, callback_data: `slot:pick:${slot.id}` }
-  ])));
+  ]), ...BACK_TO_MENU]));
 }
 
 async function finishBookingWithSlot(env, query, state, slotId) {
@@ -1808,11 +1814,11 @@ async function finishSupportTicket(env, message, text) {
   const userId = String(message.from.id);
   const body = cleanText(text);
   if (!message.text || body.startsWith("/")) {
-    await sendMessage(env, chatId, "❌ لطفاً پیام پشتیبانی را به صورت متن معمولی بفرست.");
+    await sendMessage(env, chatId, "❌ لطفاً پیام پشتیبانی را به صورت متن معمولی بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
   if (body.length < 5 || body.length > 2000) {
-    await sendMessage(env, chatId, "❌ متن پشتیبانی باید بین ۵ تا ۲۰۰۰ کاراکتر باشد. دوباره بنویس:");
+    await sendMessage(env, chatId, "❌ متن پشتیبانی باید بین ۵ تا ۲۰۰۰ کاراکتر باشد. دوباره بنویس:", keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -1870,7 +1876,8 @@ async function startReleaseFlow(env, chatId, userId) {
       "«آب بیغیرتیم زده بالا بیا کمکم کن»",
       "",
       "بعد از وویس، زمان آزاد را انتخاب می‌کنی."
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
 }
 
@@ -1879,11 +1886,11 @@ async function handleReleaseVoice(env, message, state) {
   const userId = String(message.from.id);
   const voice = message.voice;
   if (!voice?.file_id) {
-    await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.");
+    await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
   if (voice.duration < 2 || voice.duration > 120) {
-    await sendMessage(env, chatId, "❌ وویس باید بین ۲ تا ۱۲۰ ثانیه باشد. دوباره بفرست:");
+    await sendMessage(env, chatId, "❌ وویس باید بین ۲ تا ۱۲۰ ثانیه باشد. دوباره بفرست:", keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -1899,9 +1906,9 @@ async function handleReleaseVoice(env, message, state) {
     voiceFileId: voice.file_id,
     voiceDuration: voice.duration
   });
-  await sendMessage(env, chatId, "🗓 زمان آزاد را انتخاب کن:", keyboard(slots.slice(0, 12).map((slot) => [
+  await sendMessage(env, chatId, "🗓 زمان آزاد را انتخاب کن:", keyboard([...slots.slice(0, 12).map((slot) => [
     { text: slot.label, callback_data: `slot:pick:${slot.id}` }
-  ])));
+  ]), ...BACK_TO_MENU]));
 }
 
 async function finishReleaseWithSlot(env, query, state, slotId) {
@@ -2008,7 +2015,10 @@ async function startMediaPost(env, chatId, userId) {
       "",
       "لغو: /cancel"
     ].join("\n"),
-    keyboard([[{ text: "📸 راهنمای ارسال عکس", callback_data: "guide:photo" }]])
+    keyboard([
+      [{ text: "📸 راهنمای ارسال عکس", callback_data: "guide:photo" }],
+      ...BACK_TO_MENU
+    ])
   );
 }
 
@@ -2024,7 +2034,8 @@ async function startConfessionPost(env, chatId, userId) {
       "حداقل متن: ۱۰ کلمه",
       "",
       "لغو: /cancel"
-    ].join("\n")
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
   );
 }
 
@@ -2037,7 +2048,8 @@ async function sendPhotoGuide(env, chatId, userId) {
       [
         "📸 راهنمای تصویری ارسال عکس",
         "",
-        "ردیف بالا و پایین: نمونه‌های اشتباه و نمونه درست از نظر کیفیت، کادر، حریم خصوصی و دستکاری تصویر."
+        "سمت چپ: ۵ نمونه اشتباه با ضربدر",
+        "سمت راست: یک نمونه درست با تیک"
       ].join("\n")
     );
   } catch {
@@ -2091,12 +2103,12 @@ async function handleMediaPostFile(env, message) {
   const media = normalizeMediaFile(message);
 
   if (!media.ok) {
-    await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس یا فیلم تلگرام بفرست.`);
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس یا فیلم تلگرام بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
 
   await setState(env, userId, { mode: "post_media_wait_caption", media });
-  await sendMessage(env, chatId, "✅ فایل دریافت شد.\n\nحالا کپشن پست را بفرست.");
+  await sendMessage(env, chatId, "✅ فایل دریافت شد.\n\nحالا کپشن پست را بفرست.", keyboard(BACK_TO_MENU));
 }
 
 async function handleMediaPostCaption(env, message, state, text) {
@@ -2106,11 +2118,11 @@ async function handleMediaPostCaption(env, message, state, text) {
   const limit = MAX_PHOTO_CAPTION_LENGTH;
 
   if (!caption || caption.length < 5) {
-    await sendMessage(env, chatId, "❌ کپشن خیلی کوتاه است. حداقل ۵ کاراکتر بفرست:");
+    await sendMessage(env, chatId, "❌ کپشن خیلی کوتاه است. حداقل ۵ کاراکتر بفرست:", keyboard(BACK_TO_MENU));
     return;
   }
   if (caption.length > limit) {
-    await sendMessage(env, chatId, `❌ کپشن باید حداکثر ${limit} کاراکتر باشد. کوتاه‌ترش کن:`);
+    await sendMessage(env, chatId, `❌ کپشن باید حداکثر ${limit} کاراکتر باشد. کوتاه‌ترش کن:`, keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -2129,17 +2141,17 @@ async function handleConfessionPost(env, message, text) {
   const confession = cleanText(text);
 
   if (!message.text || confession.startsWith("/")) {
-    await sendMessage(env, chatId, "❌ برای اعترافات فقط متن معمولی بفرست.");
+    await sendMessage(env, chatId, "❌ برای اعترافات فقط متن معمولی بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
 
   if (wordCount(confession) < 10) {
-    await sendMessage(env, chatId, "❌ متن اعتراف باید حداقل ۱۰ کلمه باشد. کامل‌تر بنویس:");
+    await sendMessage(env, chatId, "❌ متن اعتراف باید حداقل ۱۰ کلمه باشد. کامل‌تر بنویس:", keyboard(BACK_TO_MENU));
     return;
   }
 
   if (confession.length > MAX_TEXT_LENGTH) {
-    await sendMessage(env, chatId, `❌ متن بیشتر از ${MAX_TEXT_LENGTH} کاراکتر است. کوتاه‌ترش کن:`);
+    await sendMessage(env, chatId, `❌ متن بیشتر از ${MAX_TEXT_LENGTH} کاراکتر است. کوتاه‌ترش کن:`, keyboard(BACK_TO_MENU));
     return;
   }
 
@@ -3348,6 +3360,7 @@ function proofRelationshipKeyboard(selected) {
     callback_data: `proof:rel:${value}`
   }]);
   rows.push([{ text: "ادامه", callback_data: "proof:rel_done" }]);
+  rows.push(...BACK_TO_MENU);
   return rows;
 }
 
