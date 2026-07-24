@@ -2,6 +2,12 @@ const CHANNEL_USERNAME = "@cucksclub";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
 const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-v2.png";
+const BOT_SHORT_DESCRIPTION = "C Club | تست غیرت، ارسال محتوا، نوبت و پشتیبانی";
+const BOT_DESCRIPTION = [
+  "🟢 C Club یک فضای خصوصی و مرحله‌به‌مرحله برای تست غیرت، ارسال اعتراف، ارسال عکس و فیلم، نوبت مشاوره، پشتیبانی و خدمات ویژه کاربران تاییدشده است.",
+  "",
+  "برای فعال شدن منوها اول ثبت‌نام کوتاه را کامل کنید. این ربات فقط برای کاربران ۱۸ سال به بالا طراحی شده است."
+].join("\n");
 const QUESTION_COUNT = 18;
 const MAX_TEXT_LENGTH = 2800;
 const MAX_PHOTO_CAPTION_LENGTH = 900;
@@ -346,27 +352,26 @@ const TEST_TYPES = [
 ];
 
 const MAIN_MENU = [
+  [{ text: "🧪 تست غیرت", callback_data: "menu:test" }],
   [
-    { text: "🧪 تست غیرت", callback_data: "menu:test" },
-    { text: "📅 نوبت مشاوره", callback_data: "menu:booking" }
+    { text: "📅 نوبت مشاوره", callback_data: "menu:booking" },
+    { text: "🆘 پشتیبانی", callback_data: "support:start" }
   ],
   [
     { text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" },
     { text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }
   ],
+  [{ text: "💧 تخلیه آب بیغیرتی", callback_data: "release:start" }],
+  [
+    { text: "🔁 عضویت در گروه تبادل عکس و فیلم", callback_data: "exchange:join" },
+    { text: "🔞 عضویت در گروه VIP کاکولدی", callback_data: "vip:join" }
+  ],
+  [{ text: "🎭 ساخت فیلم با چهره دلخواه", callback_data: "face:create" }],
+  [{ text: "🟢 ساخت گیف با کپشن بیغیرتی", callback_data: "gif:create" }],
   [
     { text: "📸 راهنمای ارسال عکس", callback_data: "guide:photo" },
-    { text: "🔁 گروه تبادل", callback_data: "exchange:join" }
-  ],
-  [
-    { text: "🔞 گروه VIP", callback_data: "vip:join" },
-    { text: "💧 تخلیه بیغیرتی", callback_data: "release:start" }
-  ],
-  [
-    { text: "🎭 ساخت با چهره دلخواه", callback_data: "face:create" },
-    { text: "🆘 پشتیبانی", callback_data: "support:start" }
-  ],
-  [{ text: "ℹ️ راهنما", callback_data: "menu:help" }]
+    { text: "ℹ️ راهنما", callback_data: "menu:help" }
+  ]
 ];
 
 const LOCKED_MENU = [
@@ -432,6 +437,8 @@ const ADMIN_MENU = [
     { text: "📣 ارسال پیام", callback_data: "admin:broadcast_start" },
     { text: "📊 Excel نوبت‌ها", callback_data: "admin:export_bookings" }
   ],
+  [{ text: "🟢 افزودن لیست کاکولدهای تایید شده", callback_data: "admin:add_preverified_cuckolds" }],
+  [{ text: "🟢 تنظیم توضیحات اولیه ربات", callback_data: "admin:set_bot_profile" }],
   [{ text: "📈 دریافت اکسل جامع", callback_data: "admin:export_comprehensive" }],
   [{ text: "📦 آمار سریع", callback_data: "admin:stats" }]
 ];
@@ -516,6 +523,11 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "admin_broadcast_individual") {
     await finishBroadcastIndividualTarget(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "admin_preverified_cuckolds") {
+    await finishPreverifiedCuckoldIds(env, message, text);
     return;
   }
 
@@ -674,7 +686,14 @@ async function handleCallback(query, env) {
   if (data === "face:create") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
-    await sendMessage(env, chatId, "🎭 ساخت عکس و فیلم با چهره دلخواه\n\nبه زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+    await sendMessage(env, chatId, "🎭 ساخت فیلم با چهره دلخواه\n\n🟢 این سرویس به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+
+  if (data === "gif:create") {
+    if (!(await ensureRegistered(env, chatId, userId))) return;
+    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+    await sendMessage(env, chatId, "🟢 ساخت گیف با کپشن بیغیرتی\n\nاین بخش به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
     return;
   }
 
@@ -878,10 +897,12 @@ async function sendHome(env, chatId) {
       env,
       chatId,
       [
-        "🔴⚫️ C CLUB",
+        "🟢 C CLUB",
         "",
         "خوش اومدی.",
-        "برای اینکه فضای کلاب امن، مرتب و قابل اعتماد بمونه، قبل از هر کاری ثبت‌نام کوتاه رو کامل کن.",
+        "اینجا همه‌چیز مرحله‌به‌مرحله و خصوصی جلو می‌رود: تست غیرت، ارسال اعتراف، ارسال عکس و فیلم، نوبت مشاوره، پشتیبانی و خدمات ویژه کاربران تاییدشده.",
+        "",
+        "برای اینکه فضای کلاب امن، مرتب و قابل اعتماد بماند، قبل از هر کاری ثبت‌نام کوتاه را کامل کن.",
         "",
         "بعدش منو کامل برات باز می‌شه.",
         "",
@@ -896,7 +917,7 @@ async function sendHome(env, chatId) {
     env,
     chatId,
     [
-      "🔴⚫️ C CLUB",
+      "🟢 C CLUB",
       "",
       "خوش برگشتی.",
       "اینجا می‌تونی تست بدی، محتوا بفرستی، نوبت بگیری یا از پشتیبانی پیام بذاری.",
@@ -963,7 +984,7 @@ async function handleRegistrationAge(env, message, text) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   const state = await getState(env, userId);
-  const age = Number(cleanText(text));
+  const age = Number(normalizeDigits(cleanText(text)));
   if (!Number.isInteger(age) || age < 18 || age > 80) {
     await sendMessage(env, chatId, "❌ سن باید عددی بین ۱۸ تا ۸۰ باشد. دوباره بفرست:", keyboard(BACK_TO_MENU));
     return;
@@ -1005,9 +1026,7 @@ async function handleRegistrationMarital(env, query, marital) {
     mode: "reg_city",
     profile: { ...state.profile, marital }
   });
-  await sendMessage(env, chatId, "🏙 شهر را انتخاب کن:", keyboard([...CITY_OPTIONS.map((city) => [
-    { text: city, callback_data: `reg:city:${city}` }
-  ]), ...BACK_TO_MENU]));
+  await sendMessage(env, chatId, "🏙 شهر را انتخاب کن:", keyboard(cityKeyboard()));
 }
 
 async function handleRegistrationCity(env, query, city) {
@@ -1021,7 +1040,7 @@ async function handleRegistrationCity(env, query, city) {
 
   const profile = { ...state.profile, city };
   await setState(env, userId, { mode: "reg_type", profile });
-  await sendMessage(env, chatId, "🔖 نوع را انتخاب کن:", keyboard([...getTypeMenu(profile.gender), ...BACK_TO_MENU]));
+  await sendMessage(env, chatId, "🔖 کدوم هستید؟", keyboard([...getTypeMenu(profile.gender), ...BACK_TO_MENU]));
 }
 
 async function finishRegistration(env, query, type) {
@@ -1034,12 +1053,15 @@ async function finishRegistration(env, query, type) {
     return;
   }
 
+  const preverifiedCuckold = type === "cuckold" && await isPreverifiedCuckold(env, userId);
   const profile = {
     ...state.profile,
     type,
     typeLabel: USER_TYPE_LABELS[type],
     registered: true,
-    cuckoldVerified: false,
+    cuckoldVerified: preverifiedCuckold,
+    cuckoldVerifiedAt: preverifiedCuckold ? new Date().toISOString() : "",
+    cuckoldPreverified: preverifiedCuckold,
     hotwifeVerified: false,
     createdAt: new Date().toISOString()
   };
@@ -1058,7 +1080,9 @@ async function finishRegistration(env, query, type) {
       `آیدی: ${profile.username || "ندارد"}`,
       `سن: ${profile.age}`,
       `شهر: ${profile.city}`,
-      `نوع: ${profile.typeLabel}`
+      `نوع: ${profile.typeLabel}`,
+      "",
+      preverifiedCuckold ? "🟢 شما کاکولد اثبات شده هستید و نیازی به ارسال اثبات ندارید." : "🟢 منوی اصلی برای شما فعال شد."
     ].join("\n"),
     keyboard(await getMainMenuForUser(env, userId))
   );
@@ -2561,6 +2585,34 @@ async function handleAdminCallback(env, query, data) {
     return;
   }
 
+  if (data === "admin:add_preverified_cuckolds") {
+    await setState(env, String(query.from.id), { mode: "admin_preverified_cuckolds" });
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "🟢 افزودن لیست کاکولدهای تایید شده",
+        "",
+        "آیدی عددی تلگرام کاربران را بفرست؛ هر خط یک آیدی یا همه را پشت سر هم با فاصله/کاما.",
+        "",
+        "مثال:",
+        "7204112173",
+        "123456789, 987654321",
+        "",
+        "بعد از ثبت، اگر این افراد با همان آیدی ثبت‌نام کنند و نوعشان کاکولد باشد، دیگر اثبات از آن‌ها خواسته نمی‌شود.",
+        "",
+        "لغو: /cancel"
+      ].join("\n"),
+      keyboard(BACK_TO_MENU)
+    );
+    return;
+  }
+
+  if (data === "admin:set_bot_profile") {
+    await setBotProfile(env, chatId);
+    return;
+  }
+
   if (data === "admin:export_profiles") {
     await exportProfiles(env, chatId);
     return;
@@ -2592,6 +2644,7 @@ async function handleAdminCallback(env, query, data) {
     const releases = await getList(env, "release_requests");
     const verified = profiles.filter((profile) => profile.cuckoldVerified);
     const verifiedHotwives = profiles.filter((profile) => profile.hotwifeVerified);
+    const preverifiedIds = await getPreverifiedCuckoldIds(env);
     await sendMessage(
       env,
       chatId,
@@ -2600,6 +2653,7 @@ async function handleAdminCallback(env, query, data) {
         "",
         `ثبت‌نامی‌ها: ${profiles.length}`,
         `کاکولدهای تایید شده: ${verified.length}`,
+        `آیدی‌های تایید دستی: ${preverifiedIds.length}`,
         `هاتوایف‌های تایید شده: ${verifiedHotwives.length}`,
         `درخواست‌های اثبات: ${proofs.length}`,
         `اثبات‌های در انتظار: ${pendingProofs.length}`,
@@ -2671,6 +2725,49 @@ async function finishAddReleaseSlot(env, message, text) {
   await putListItem(env, "slots", slot);
   await clearState(env, userId);
   await sendMessage(env, chatId, `✅ زمان تخلیه اضافه شد:\n${slot.label}`, keyboard(ADMIN_MENU));
+}
+
+async function finishPreverifiedCuckoldIds(env, message, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const ids = parseTelegramIds(text);
+  if (!ids.length) {
+    await sendMessage(env, chatId, "❌ هیچ آیدی عددی معتبری پیدا نکردم. دوباره فقط آیدی‌های عددی را بفرست:", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  const result = await addPreverifiedCuckoldIds(env, ids);
+  const appliedCount = await applyPreverifiedCuckoldIdsToExistingProfiles(env, ids);
+  await clearState(env, userId);
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🟢 لیست تایید دستی ثبت شد.",
+      "",
+      `آیدی‌های جدید: ${result.added}`,
+      `کل آیدی‌های ذخیره‌شده: ${result.total}`,
+      `کاربران ثبت‌نام‌کرده‌ای که همین الان تایید شدند: ${appliedCount}`,
+      "",
+      "از این به بعد اگر این آیدی‌ها با نوع کاکولد ثبت‌نام کنند، پیام «شما کاکولد اثبات شده هستید» می‌گیرند و اثبات لازم ندارند."
+    ].join("\n"),
+    keyboard(ADMIN_MENU)
+  );
+}
+
+async function setBotProfile(env, chatId) {
+  await telegram(env, "setMyShortDescription", { short_description: BOT_SHORT_DESCRIPTION });
+  await telegram(env, "setMyDescription", { description: BOT_DESCRIPTION });
+  await telegram(env, "setMyCommands", {
+    commands: [
+      { command: "start", description: "شروع و منوی اصلی" },
+      { command: "admin", description: "پنل مدیریت" },
+      { command: "cancel", description: "لغو عملیات فعلی" }
+    ]
+  });
+  await sendMessage(env, chatId, "🟢 توضیحات اولیه، معرفی کوتاه و دستورهای ربات تنظیم شد.", keyboard(ADMIN_MENU));
 }
 
 async function closeSlot(env, query, slotId) {
@@ -3039,7 +3136,7 @@ async function exportComprehensive(env, chatId) {
   const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "hotwife_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_instagram", "last_proof_partner_awareness", "last_proof_reject_reason"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_instagram", "last_proof_partner_awareness", "last_proof_reject_reason"],
     ...profiles.map((profile) => {
       const userTests = tests.filter((item) => item.userId === profile.userId);
       const lastTest = userTests[userTests.length - 1];
@@ -3060,6 +3157,7 @@ async function exportComprehensive(env, chatId) {
         profile.city,
         profile.typeLabel || profile.type,
         profile.cuckoldVerified ? "yes" : "no",
+        profile.cuckoldPreverified ? "yes" : "no",
         profile.hotwifeVerified ? "yes" : "no",
         profile.createdAt,
         userTests.length,
@@ -3364,6 +3462,46 @@ async function getPendingProofForUser(env, userId) {
   return (await getPendingProofs(env)).find((proof) => String(proof.userId) === String(userId));
 }
 
+async function getPreverifiedCuckoldIds(env) {
+  return (await getJson(env, "preverified_cuckold_ids")) || [];
+}
+
+async function isPreverifiedCuckold(env, userId) {
+  const ids = await getPreverifiedCuckoldIds(env);
+  return ids.includes(String(userId));
+}
+
+async function addPreverifiedCuckoldIds(env, ids) {
+  const existing = await getPreverifiedCuckoldIds(env);
+  const merged = [...new Set([...existing.map(String), ...ids.map(String)])];
+  await env.BOT_KV.put("preverified_cuckold_ids", JSON.stringify(merged));
+  return { added: merged.length - existing.length, total: merged.length };
+}
+
+async function applyPreverifiedCuckoldIdsToExistingProfiles(env, ids) {
+  const wanted = new Set(ids.map(String));
+  const profiles = await getProfiles(env);
+  let applied = 0;
+  for (const profile of profiles) {
+    if (
+      wanted.has(String(profile.userId)) &&
+      profile.gender === "male" &&
+      profile.type === "cuckold" &&
+      !profile.cuckoldVerified
+    ) {
+      const updated = {
+        ...profile,
+        cuckoldVerified: true,
+        cuckoldVerifiedAt: new Date().toISOString(),
+        cuckoldPreverified: true
+      };
+      await env.BOT_KV.put(`profile:${profile.userId}`, JSON.stringify(updated));
+      applied += 1;
+    }
+  }
+  return applied;
+}
+
 async function ensureRegistered(env, chatId, userId) {
   const profile = await getProfile(env, userId);
   if (profile?.registered) return true;
@@ -3450,7 +3588,7 @@ function formatProfilesTable(title, profiles) {
 
 function profileRows(profiles) {
   return [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "hotwife_verified", "registered_at"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "registered_at"],
     ...profiles.map((profile) => [
       profile.userId,
       profile.name,
@@ -3461,6 +3599,7 @@ function profileRows(profiles) {
       profile.city,
       profile.typeLabel || profile.type,
       profile.cuckoldVerified ? "yes" : "no",
+      profile.cuckoldPreverified ? "yes" : "no",
       profile.hotwifeVerified ? "yes" : "no",
       profile.createdAt
     ])
@@ -3498,6 +3637,19 @@ function getTypeMenu(gender) {
   return getAllowedTypes(gender).map((type) => [
     { text: USER_TYPE_LABELS[type], callback_data: `reg:type:${type}` }
   ]);
+}
+
+function cityKeyboard() {
+  const buttons = CITY_OPTIONS.map((city) => ({ text: city, callback_data: `reg:city:${city}` }));
+  return [...chunkButtons(buttons, 3), ...BACK_TO_MENU];
+}
+
+function chunkButtons(buttons, size) {
+  const rows = [];
+  for (let index = 0; index < buttons.length; index += size) {
+    rows.push(buttons.slice(index, index + size));
+  }
+  return rows;
 }
 
 function proofRelationshipLabel(value) {
@@ -3541,6 +3693,10 @@ function normalizeInstagramUsername(value) {
   const username = text.replace(/^@/, "");
   if (!/^[A-Za-z0-9._]{2,30}$/.test(username)) return "";
   return `@${username}`;
+}
+
+function parseTelegramIds(value) {
+  return [...new Set((normalizeDigits(value).match(/\b\d{5,20}\b/g) || []).map(String))];
 }
 
 function countUrls(value) {
