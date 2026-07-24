@@ -354,20 +354,20 @@ const TEST_TYPES = [
 const MAIN_MENU = [
   [{ text: "🧪 تست غیرت", callback_data: "menu:test" }],
   [
-    { text: "📅 نوبت مشاوره", callback_data: "menu:booking" },
-    { text: "🆘 پشتیبانی", callback_data: "support:start" }
-  ],
-  [
     { text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" },
     { text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }
   ],
   [{ text: "💧 تخلیه آب بیغیرتی", callback_data: "release:start" }],
   [
-    { text: "🔁 عضویت در گروه تبادل عکس و فیلم", callback_data: "exchange:join" },
-    { text: "🔞 عضویت در گروه VIP کاکولدی", callback_data: "vip:join" }
+    { text: "🔞 عضویت در گروه VIP", callback_data: "vip:join" },
+    { text: "🔁 عضویت در گروه تبادل", callback_data: "exchange:join" }
   ],
   [{ text: "🎭 ساخت فیلم با چهره دلخواه", callback_data: "face:create" }],
   [{ text: "🟢 ساخت گیف با کپشن بیغیرتی", callback_data: "gif:create" }],
+  [
+    { text: "📅 نوبت مشاوره", callback_data: "menu:booking" },
+    { text: "🆘 پشتیبانی", callback_data: "support:start" }
+  ],
   [
     { text: "📸 راهنمای ارسال عکس", callback_data: "guide:photo" },
     { text: "ℹ️ راهنما", callback_data: "menu:help" }
@@ -1053,7 +1053,7 @@ async function finishRegistration(env, query, type) {
     return;
   }
 
-  const preverifiedCuckold = type === "cuckold" && await isPreverifiedCuckold(env, userId);
+  const preverifiedCuckold = type === "cuckold" && await isPreverifiedCuckold(env, state.profile.username);
   const profile = {
     ...state.profile,
     type,
@@ -1755,20 +1755,22 @@ async function finishTest(env, chatId, userId, state) {
     env,
     chatId,
     [
-      `📊 نتیجه تست غیرت`,
+      "🟢 <b><u>نتیجه تست غیرت</u></b>",
+      "━━━━━━━━━━━━",
       "",
-      `نمره خام: ${total}`,
-      `بازه نمره: ${min} تا ${max}`,
-      `درصد طیف: ${percent}%`,
-      `تیپ: ${result.title}`,
+      `🎭 <b>تیپ شخصیت:</b> <u>${escapeHtml(result.title)}</u>`,
+      `📊 <b>درصد طیف:</b> ${percent}%`,
+      `🧮 <b>نمره خام:</b> ${total}`,
+      `📍 <b>بازه نمره:</b> ${min} تا ${max}`,
       "",
-      result.summary,
+      decorateTestText(result.summary),
       "",
-      result.advice,
+      decorateTestText(result.advice),
       "",
-      "این آزمون صرفاً برای خودشناسی است و ملاک قطعی محسوب نمی‌شود."
+      "━━━━━━━━━━━━",
+      "🌱 <i>این آزمون صرفاً برای خودشناسی است و ملاک قطعی محسوب نمی‌شود.</i>"
     ].join("\n"),
-    keyboard(await getMainMenuForUser(env, userId))
+    { parse_mode: "HTML", ...keyboard(await getMainMenuForUser(env, userId)) }
   );
 }
 
@@ -2593,13 +2595,13 @@ async function handleAdminCallback(env, query, data) {
       [
         "🟢 افزودن لیست کاکولدهای تایید شده",
         "",
-        "آیدی عددی تلگرام کاربران را بفرست؛ هر خط یک آیدی یا همه را پشت سر هم با فاصله/کاما.",
+        "یوزرنیم تلگرام کاربران را با @ بفرست؛ هر خط یک آیدی یا همه را پشت سر هم با فاصله/کاما.",
         "",
         "مثال:",
-        "7204112173",
-        "123456789, 987654321",
+        "@username1",
+        "@username2, @username3",
         "",
-        "بعد از ثبت، اگر این افراد با همان آیدی ثبت‌نام کنند و نوعشان کاکولد باشد، دیگر اثبات از آن‌ها خواسته نمی‌شود.",
+        "بعد از ثبت، اگر این افراد با همان یوزرنیم ثبت‌نام کنند و نوعشان کاکولد باشد، دیگر اثبات از آن‌ها خواسته نمی‌شود.",
         "",
         "لغو: /cancel"
       ].join("\n"),
@@ -2644,7 +2646,7 @@ async function handleAdminCallback(env, query, data) {
     const releases = await getList(env, "release_requests");
     const verified = profiles.filter((profile) => profile.cuckoldVerified);
     const verifiedHotwives = profiles.filter((profile) => profile.hotwifeVerified);
-    const preverifiedIds = await getPreverifiedCuckoldIds(env);
+    const preverifiedHandles = await getPreverifiedCuckoldHandles(env);
     await sendMessage(
       env,
       chatId,
@@ -2653,7 +2655,7 @@ async function handleAdminCallback(env, query, data) {
         "",
         `ثبت‌نامی‌ها: ${profiles.length}`,
         `کاکولدهای تایید شده: ${verified.length}`,
-        `آیدی‌های تایید دستی: ${preverifiedIds.length}`,
+        `یوزرنیم‌های تایید دستی: ${preverifiedHandles.length}`,
         `هاتوایف‌های تایید شده: ${verifiedHotwives.length}`,
         `درخواست‌های اثبات: ${proofs.length}`,
         `اثبات‌های در انتظار: ${pendingProofs.length}`,
@@ -2732,14 +2734,14 @@ async function finishPreverifiedCuckoldIds(env, message, text) {
   const userId = String(message.from.id);
   if (!isAdmin(env, userId)) return;
 
-  const ids = parseTelegramIds(text);
-  if (!ids.length) {
-    await sendMessage(env, chatId, "❌ هیچ آیدی عددی معتبری پیدا نکردم. دوباره فقط آیدی‌های عددی را بفرست:", keyboard(BACK_TO_MENU));
+  const handles = parseTelegramHandles(text);
+  if (!handles.length) {
+    await sendMessage(env, chatId, "❌ هیچ یوزرنیم @دار معتبری پیدا نکردم. دوباره مثل @username بفرست:", keyboard(BACK_TO_MENU));
     return;
   }
 
-  const result = await addPreverifiedCuckoldIds(env, ids);
-  const appliedCount = await applyPreverifiedCuckoldIdsToExistingProfiles(env, ids);
+  const result = await addPreverifiedCuckoldHandles(env, handles);
+  const appliedCount = await applyPreverifiedCuckoldHandlesToExistingProfiles(env, handles);
   await clearState(env, userId);
   await sendMessage(
     env,
@@ -2747,11 +2749,11 @@ async function finishPreverifiedCuckoldIds(env, message, text) {
     [
       "🟢 لیست تایید دستی ثبت شد.",
       "",
-      `آیدی‌های جدید: ${result.added}`,
-      `کل آیدی‌های ذخیره‌شده: ${result.total}`,
+      `یوزرنیم‌های جدید: ${result.added}`,
+      `کل یوزرنیم‌های ذخیره‌شده: ${result.total}`,
       `کاربران ثبت‌نام‌کرده‌ای که همین الان تایید شدند: ${appliedCount}`,
       "",
-      "از این به بعد اگر این آیدی‌ها با نوع کاکولد ثبت‌نام کنند، پیام «شما کاکولد اثبات شده هستید» می‌گیرند و اثبات لازم ندارند."
+      "از این به بعد اگر این یوزرنیم‌ها با نوع کاکولد ثبت‌نام کنند، پیام «شما کاکولد اثبات شده هستید» می‌گیرند و اثبات لازم ندارند."
     ].join("\n"),
     keyboard(ADMIN_MENU)
   );
@@ -3462,29 +3464,29 @@ async function getPendingProofForUser(env, userId) {
   return (await getPendingProofs(env)).find((proof) => String(proof.userId) === String(userId));
 }
 
-async function getPreverifiedCuckoldIds(env) {
-  return (await getJson(env, "preverified_cuckold_ids")) || [];
+async function getPreverifiedCuckoldHandles(env) {
+  return (await getJson(env, "preverified_cuckold_handles")) || [];
 }
 
-async function isPreverifiedCuckold(env, userId) {
-  const ids = await getPreverifiedCuckoldIds(env);
-  return ids.includes(String(userId));
+async function isPreverifiedCuckold(env, username) {
+  const handles = await getPreverifiedCuckoldHandles(env);
+  return handles.includes(normalizeTelegramHandle(username));
 }
 
-async function addPreverifiedCuckoldIds(env, ids) {
-  const existing = await getPreverifiedCuckoldIds(env);
-  const merged = [...new Set([...existing.map(String), ...ids.map(String)])];
-  await env.BOT_KV.put("preverified_cuckold_ids", JSON.stringify(merged));
+async function addPreverifiedCuckoldHandles(env, handles) {
+  const existing = await getPreverifiedCuckoldHandles(env);
+  const merged = [...new Set([...existing.map(normalizeTelegramHandle), ...handles.map(normalizeTelegramHandle)].filter(Boolean))];
+  await env.BOT_KV.put("preverified_cuckold_handles", JSON.stringify(merged));
   return { added: merged.length - existing.length, total: merged.length };
 }
 
-async function applyPreverifiedCuckoldIdsToExistingProfiles(env, ids) {
-  const wanted = new Set(ids.map(String));
+async function applyPreverifiedCuckoldHandlesToExistingProfiles(env, handles) {
+  const wanted = new Set(handles.map(normalizeTelegramHandle));
   const profiles = await getProfiles(env);
   let applied = 0;
   for (const profile of profiles) {
     if (
-      wanted.has(String(profile.userId)) &&
+      wanted.has(normalizeTelegramHandle(profile.username)) &&
       profile.gender === "male" &&
       profile.type === "cuckold" &&
       !profile.cuckoldVerified
@@ -3695,8 +3697,38 @@ function normalizeInstagramUsername(value) {
   return `@${username}`;
 }
 
-function parseTelegramIds(value) {
-  return [...new Set((normalizeDigits(value).match(/\b\d{5,20}\b/g) || []).map(String))];
+function normalizeTelegramHandle(value) {
+  const username = cleanText(value).replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9_]{5,32}$/.test(username)) return "";
+  return `@${username}`;
+}
+
+function parseTelegramHandles(value) {
+  return [...new Set((String(value).match(/@[A-Za-z0-9_]{5,32}/g) || []).map(normalizeTelegramHandle).filter(Boolean))];
+}
+
+function decorateTestText(value) {
+  return String(value || "").split("\n").map((line) => {
+    if (line.startsWith("### ")) {
+      return `🟢 <b><u>${escapeHtml(line.replace(/^###\s+/, ""))}</u></b>`;
+    }
+    return formatInlineBold(line);
+  }).join("\n");
+}
+
+function formatInlineBold(value) {
+  const parts = String(value || "").split("**");
+  return parts.map((part, index) => {
+    const escaped = escapeHtml(part);
+    return index % 2 === 1 ? `<b>${escaped}</b>` : escaped;
+  }).join("");
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function countUrls(value) {
