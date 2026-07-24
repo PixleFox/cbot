@@ -15,6 +15,8 @@ const MAX_VIDEO_CAPTION_LENGTH = 900;
 const POST_COOLDOWN_SECONDS = 90;
 const BOOKING_COOLDOWN_SECONDS = 60;
 const TEST_COOLDOWN_SECONDS = 60;
+const INVALID_SUBMISSION_LIMIT = 3;
+const USER_BAN_SECONDS = 60 * 60 * 24 * 2;
 const REMINDER_WINDOW_MINUTES = 30;
 const DEFAULT_POST_HOUR = 17;
 const DEFAULT_POST_MINUTE = 48;
@@ -437,6 +439,10 @@ const ADMIN_MENU = [
     { text: "📣 ارسال پیام", callback_data: "admin:broadcast_start" },
     { text: "📊 Excel نوبت‌ها", callback_data: "admin:export_bookings" }
   ],
+  [
+    { text: "🚫 لیست بن‌شده‌ها", callback_data: "admin:list_banned" },
+    { text: "⛔️ بن کردن کاربر", callback_data: "admin:ban_user" }
+  ],
   [{ text: "🟢 افزودن لیست کاکولدهای تایید شده", callback_data: "admin:add_preverified_cuckolds" }],
   [{ text: "🟢 تنظیم توضیحات اولیه ربات", callback_data: "admin:set_bot_profile" }],
   [{ text: "📈 دریافت اکسل جامع", callback_data: "admin:export_comprehensive" }],
@@ -481,6 +487,8 @@ async function handleMessage(message, env) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   const text = (message.text || "").trim();
+
+  if (!isAdmin(env, userId) && await notifyIfBanned(env, chatId, userId)) return;
 
   if (text === "/start") {
     await clearState(env, userId);
@@ -528,6 +536,11 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "admin_preverified_cuckolds") {
     await finishPreverifiedCuckoldIds(env, message, text);
+    return;
+  }
+
+  if (state?.mode === "admin_ban_user") {
+    await finishManualUserBan(env, message, text);
     return;
   }
 
@@ -636,6 +649,7 @@ async function handleCallback(query, env) {
   await answerCallback(env, query.id);
 
   if (query.message.chat?.type !== "private" && !data.startsWith("post:") && !data.startsWith("proof:")) return;
+  if (!isAdmin(env, userId) && await notifyIfBanned(env, chatId, userId)) return;
 
   if (data === "reg:start") {
     await startRegistration(env, chatId, userId, query.from);
@@ -878,6 +892,12 @@ async function handleCallback(query, env) {
 
   if (data.startsWith("slot:close:")) {
     await closeSlot(env, query, data.replace("slot:close:", ""));
+    return;
+  }
+
+  if (data.startsWith("ban:unban:")) {
+    if (!isAdmin(env, userId)) return;
+    await unbanUser(env, query, data.replace("ban:unban:", ""));
     return;
   }
 
@@ -1261,6 +1281,7 @@ async function handleProofVoice(env, message, state) {
   const userId = String(message.from.id);
   const voice = message.voice;
   if (!voice?.file_id) {
+    if (await recordInvalidSubmission(env, message, "به جای وویس، نوع دیگری از پیام فرستاده شد.", "وویس تلگرام")) return;
     await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
@@ -1403,6 +1424,7 @@ async function handleProofSelfie(env, message, state) {
   const userId = String(message.from.id);
   const media = normalizeProofMedia(message);
   if (!media.ok) {
+    if (await recordInvalidSubmission(env, message, media.error, "عکس/فیلم معتبر برای اثبات")) return;
     await sendMessage(env, chatId, `❌ ${media.error}\n\nلطفاً عکس/فیلم دو نفره معتبر بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
@@ -1438,6 +1460,7 @@ async function handleProofPartnerHijab(env, message, state) {
   const userId = String(message.from.id);
   const media = normalizeProofMedia(message);
   if (!media.ok) {
+    if (await recordInvalidSubmission(env, message, media.error, "عکس/فیلم با حجاب معتبر")) return;
     await sendMessage(env, chatId, `❌ ${media.error}\n\nلطفاً عکس/فیلم با حجاب معتبر بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
@@ -1474,6 +1497,7 @@ async function handleProofPartnerNoHijab(env, message, state) {
   const userId = String(message.from.id);
   const media = normalizeProofMedia(message);
   if (!media.ok) {
+    if (await recordInvalidSubmission(env, message, media.error, "عکس/فیلم جذاب معتبر")) return;
     await sendMessage(env, chatId, `❌ ${media.error}\n\nلطفاً عکس/فیلم جذاب معتبر بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
@@ -1959,6 +1983,7 @@ async function finishSupportTicket(env, message, text) {
   const userId = String(message.from.id);
   const body = cleanText(text);
   if (!message.text || body.startsWith("/")) {
+    if (await recordInvalidSubmission(env, message, "به جای متن پشتیبانی، نوع دیگری از پیام فرستاده شد.", "متن معمولی")) return;
     await sendMessage(env, chatId, "❌ لطفاً پیام پشتیبانی را به صورت متن معمولی بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
@@ -2031,6 +2056,7 @@ async function handleReleaseVoice(env, message, state) {
   const userId = String(message.from.id);
   const voice = message.voice;
   if (!voice?.file_id) {
+    if (await recordInvalidSubmission(env, message, "به جای وویس تخلیه، نوع دیگری از پیام فرستاده شد.", "وویس تلگرام")) return;
     await sendMessage(env, chatId, "❌ لطفاً فقط وویس تلگرام بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
@@ -2248,6 +2274,7 @@ async function handleMediaPostFile(env, message) {
   const media = normalizeMediaFile(message);
 
   if (!media.ok) {
+    if (await recordInvalidSubmission(env, message, media.error, "عکس یا فیلم تلگرام")) return;
     await sendMessage(env, chatId, `❌ ${media.error}\n\nفقط عکس یا فیلم تلگرام بفرست.`, keyboard(BACK_TO_MENU));
     return;
   }
@@ -2263,6 +2290,7 @@ async function handleMediaPostCaption(env, message, state, text) {
   const limit = MAX_PHOTO_CAPTION_LENGTH;
 
   if (!caption || caption.length < 5) {
+    if (await recordInvalidSubmission(env, message, "کپشن ارسال نشده یا بیش از حد کوتاه بود.", "کپشن متنی")) return;
     await sendMessage(env, chatId, "❌ کپشن خیلی کوتاه است. حداقل ۵ کاراکتر بفرست:", keyboard(BACK_TO_MENU));
     return;
   }
@@ -2286,11 +2314,13 @@ async function handleConfessionPost(env, message, text) {
   const confession = cleanText(text);
 
   if (!message.text || confession.startsWith("/")) {
+    if (await recordInvalidSubmission(env, message, "به جای متن اعتراف، نوع دیگری از پیام فرستاده شد.", "متن اعتراف")) return;
     await sendMessage(env, chatId, "❌ برای اعترافات فقط متن معمولی بفرست.", keyboard(BACK_TO_MENU));
     return;
   }
 
   if (wordCount(confession) < 10) {
+    if (await recordInvalidSubmission(env, message, "متن اعتراف کمتر از حداقل ۱۰ کلمه بود.", "متن اعتراف حداقل ۱۰ کلمه‌ای")) return;
     await sendMessage(env, chatId, "❌ متن اعتراف باید حداقل ۱۰ کلمه باشد. کامل‌تر بنویس:", keyboard(BACK_TO_MENU));
     return;
   }
@@ -2587,6 +2617,30 @@ async function handleAdminCallback(env, query, data) {
     return;
   }
 
+  if (data === "admin:list_banned") {
+    await listBannedUsers(env, chatId);
+    return;
+  }
+
+  if (data === "admin:ban_user") {
+    await setState(env, String(query.from.id), { mode: "admin_ban_user" });
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "⛔️ بن کردن کاربر",
+        "",
+        "یوزرنیم، آیدی عددی، یا نام ثبت‌نامی کاربر را بفرست.",
+        "مثال: @username",
+        "",
+        "بن به مدت ۲ روز فعال می‌شود.",
+        "لغو: /cancel"
+      ].join("\n"),
+      keyboard(BACK_TO_MENU)
+    );
+    return;
+  }
+
   if (data === "admin:add_preverified_cuckolds") {
     await setState(env, String(query.from.id), { mode: "admin_preverified_cuckolds" });
     await sendMessage(
@@ -2759,6 +2813,29 @@ async function finishPreverifiedCuckoldIds(env, message, text) {
   );
 }
 
+async function finishManualUserBan(env, message, text) {
+  const chatId = String(message.chat.id);
+  const adminId = String(message.from.id);
+  if (!isAdmin(env, adminId)) return;
+
+  const profile = await findProfileForAdmin(env, text);
+  if (!profile) {
+    await sendMessage(env, chatId, "❌ کاربر پیدا نشد. یوزرنیم، آیدی عددی یا نام ثبت‌نامی را دقیق‌تر بفرست:", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  const ban = await banUser(env, profile.userId, {
+    username: profile.username || "",
+    name: profile.name || "",
+    reason: "بن دستی توسط ادمین",
+    source: "admin",
+    bannedBy: adminId
+  });
+  await clearState(env, adminId);
+  await sendMessage(env, chatId, `⛔️ کاربر تا ${formatDateTime(ban.expiresAt)} بن شد.\n\n${profile.name || "-"} | ${profile.username || profile.userId}`, keyboard(ADMIN_MENU));
+  await sendMessage(env, profile.userId, "⛔️ شما تا دو روز بن شدید و در این مدت نمی‌توانید چیزی به ربات بفرستید.").catch(() => {});
+}
+
 async function setBotProfile(env, chatId) {
   await telegram(env, "setMyShortDescription", { short_description: BOT_SHORT_DESCRIPTION });
   await telegram(env, "setMyDescription", { description: BOT_DESCRIPTION });
@@ -2790,6 +2867,35 @@ async function closeSlot(env, query, slotId) {
 
 async function sendAdminPanel(env, chatId) {
   await sendMessage(env, chatId, "🛠 پنل ادمین\n\nچه کاری می‌خواهی انجام بدهی؟", keyboard(ADMIN_MENU));
+}
+
+async function listBannedUsers(env, chatId) {
+  const bans = await getActiveBans(env);
+  if (!bans.length) {
+    await sendMessage(env, chatId, "🟢 هیچ کاربر بن‌شده فعالی نداریم.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const lines = ["🚫 لیست بن‌شده‌های فعال", ""];
+  const rows = [];
+  for (const ban of bans.slice(0, 25)) {
+    const profile = await getProfile(env, ban.userId);
+    const name = profile?.name || ban.name || ban.firstName || "-";
+    const username = profile?.username || ban.username || "";
+    lines.push(`${name} | ${username || ban.userId} | تا ${formatDateTime(ban.expiresAt)} | ${ban.reason || "-"}`);
+    rows.push([{ text: `🟢 رفع بن ${name}`, callback_data: `ban:unban:${ban.userId}` }]);
+  }
+  if (bans.length > 25) lines.push(`... و ${bans.length - 25} مورد دیگر`);
+  rows.push([{ text: "↩️ پنل ادمین", callback_data: "admin:stats" }]);
+  await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function unbanUser(env, query, targetUserId) {
+  const chatId = String(query.message.chat.id);
+  await env.BOT_KV.delete(`ban:${targetUserId}`);
+  await env.BOT_KV.delete(`invalid:${targetUserId}`);
+  await sendMessage(env, chatId, `🟢 بن کاربر برداشته شد.\n\nUser ID: ${targetUserId}`, keyboard(ADMIN_MENU));
+  await sendMessage(env, targetUserId, "🟢 بن شما برداشته شد. می‌توانید دوباره از ربات استفاده کنید.").catch(() => {});
 }
 
 async function listScheduledPosts(env, chatId) {
@@ -3462,6 +3568,118 @@ async function getPendingProofs(env) {
 
 async function getPendingProofForUser(env, userId) {
   return (await getPendingProofs(env)).find((proof) => String(proof.userId) === String(userId));
+}
+
+async function getActiveBan(env, userId) {
+  const ban = await getJson(env, `ban:${userId}`);
+  if (!ban) return null;
+  if (Date.parse(ban.expiresAt || "") <= Date.now()) {
+    await env.BOT_KV.delete(`ban:${userId}`);
+    return null;
+  }
+  return ban;
+}
+
+async function notifyIfBanned(env, chatId, userId) {
+  const ban = await getActiveBan(env, userId);
+  if (!ban) return false;
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "⛔️ شما تا دو روز بن شدید.",
+      "",
+      `پایان بن: ${formatDateTime(ban.expiresAt)}`,
+      "تا پایان این زمان نمی‌توانید چیزی به ربات بفرستید."
+    ].join("\n")
+  );
+  return true;
+}
+
+async function recordInvalidSubmission(env, message, reason, expected) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (isAdmin(env, userId)) return false;
+
+  const current = (await getJson(env, `invalid:${userId}`)) || { count: 0, reasons: [] };
+  const next = {
+    count: Number(current.count || 0) + 1,
+    reasons: [...(current.reasons || []), { reason, expected, at: new Date().toISOString() }].slice(-10),
+    updatedAt: new Date().toISOString()
+  };
+  await env.BOT_KV.put(`invalid:${userId}`, JSON.stringify(next), { expirationTtl: USER_BAN_SECONDS });
+
+  if (next.count >= INVALID_SUBMISSION_LIMIT) {
+    const profile = await getProfile(env, userId);
+    const ban = await banUser(env, userId, {
+      username: profile?.username || (message.from.username ? `@${message.from.username}` : ""),
+      name: profile?.name || message.from.first_name || "",
+      reason: `ارسال اشتباه یا غیرمرتبط بیش از ${INVALID_SUBMISSION_LIMIT} بار`,
+      source: "spam_guard",
+      lastInvalidReason: reason
+    });
+    await clearState(env, userId);
+    await env.BOT_KV.delete(`invalid:${userId}`);
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "⛔️ شما تا دو روز بن شدید.",
+        "",
+        "چند بار پشت سر هم چیزی غیر از مورد خواسته‌شده فرستادید.",
+        `پایان بن: ${formatDateTime(ban.expiresAt)}`
+      ].join("\n")
+    );
+    await safeNotifyAdmin(env, [
+      "🚫 بن خودکار ضداسپم",
+      "",
+      `کاربر: ${profile?.name || message.from.first_name || "-"} | ${profile?.username || (message.from.username ? `@${message.from.username}` : userId)}`,
+      `دلیل آخر: ${reason}`,
+      `تا: ${formatDateTime(ban.expiresAt)}`
+    ].join("\n"));
+    return true;
+  }
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      `❌ مورد اشتباه دریافت شد. اخطار ${next.count}/${INVALID_SUBMISSION_LIMIT}`,
+      "",
+      `مورد خواسته‌شده: ${expected}`,
+      "اگر چند بار پشت سر هم محتوای اشتباه بفرستی، ۲ روز بن می‌شوی."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
+  return true;
+}
+
+async function banUser(env, userId, details = {}) {
+  const now = new Date();
+  const ban = {
+    userId: String(userId),
+    username: details.username || "",
+    name: details.name || "",
+    reason: details.reason || "بن کاربر",
+    source: details.source || "admin",
+    bannedBy: details.bannedBy || "",
+    lastInvalidReason: details.lastInvalidReason || "",
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + USER_BAN_SECONDS * 1000).toISOString()
+  };
+  await env.BOT_KV.put(`ban:${userId}`, JSON.stringify(ban), { expirationTtl: USER_BAN_SECONDS });
+  await putListItem(env, "user_bans", ban);
+  return ban;
+}
+
+async function getActiveBans(env) {
+  const refs = await getList(env, "user_bans");
+  const byUser = new Map();
+  for (const ref of refs) {
+    const ban = await getActiveBan(env, ref.userId);
+    if (ban) byUser.set(String(ban.userId), ban);
+  }
+  return [...byUser.values()].sort((a, b) => Date.parse(b.expiresAt || 0) - Date.parse(a.expiresAt || 0));
 }
 
 async function getPreverifiedCuckoldHandles(env) {
