@@ -17,6 +17,7 @@ const BOOKING_COOLDOWN_SECONDS = 60;
 const TEST_COOLDOWN_SECONDS = 60;
 const INVALID_SUBMISSION_LIMIT = 3;
 const USER_BAN_SECONDS = 60 * 60 * 24 * 2;
+const TEST_FEATURE_ENABLED = false;
 const REMINDER_WINDOW_MINUTES = 30;
 const DEFAULT_POST_HOUR = 17;
 const DEFAULT_POST_MINUTE = 48;
@@ -605,7 +606,14 @@ async function handleMessage(message, env) {
   }
 
   if (state?.mode === "test") {
-    await sendMessage(env, chatId, "🎛 لطفاً جواب آزمون را فقط با دکمه‌های زیر همان سوال انتخاب کن.");
+    if (!TEST_FEATURE_ENABLED) {
+      await clearState(env, userId);
+      await sendDisabledTestMessage(env, chatId, userId);
+      return;
+    }
+    if (await checkCooldown(env, userId, "test_text_hint", 60)) {
+      await sendMessage(env, chatId, "🎛 لطفاً جواب آزمون را فقط با دکمه‌های زیر همان سوال انتخاب کن.");
+    }
     return;
   }
 
@@ -639,7 +647,9 @@ async function handleMessage(message, env) {
     return;
   }
 
-  await sendMessage(env, chatId, "از منوی زیر انتخاب کن:", keyboard(await getMainMenuForUser(env, userId)));
+  if (await checkCooldown(env, userId, "idle_menu_hint", 60)) {
+    await sendMessage(env, chatId, "از منوی زیر انتخاب کن:", keyboard(await getMainMenuForUser(env, userId)));
+  }
 }
 
 async function handleCallback(query, env) {
@@ -700,14 +710,18 @@ async function handleCallback(query, env) {
   if (data === "face:create") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
-    await sendMessage(env, chatId, "🎭 ساخت فیلم با چهره دلخواه\n\n🟢 این سرویس به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+    if (await checkCooldown(env, userId, "coming_soon_face", 60)) {
+      await sendMessage(env, chatId, "🎭 ساخت فیلم با چهره دلخواه\n\n🟢 این سرویس به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+    }
     return;
   }
 
   if (data === "gif:create") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
-    await sendMessage(env, chatId, "🟢 ساخت گیف با کپشن بیغیرتی\n\nاین بخش به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+    if (await checkCooldown(env, userId, "coming_soon_gif", 60)) {
+      await sendMessage(env, chatId, "🟢 ساخت گیف با کپشن بیغیرتی\n\nاین بخش به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+    }
     return;
   }
 
@@ -782,6 +796,10 @@ async function handleCallback(query, env) {
 
   if (data === "menu:test") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
+    if (!TEST_FEATURE_ENABLED) {
+      await sendDisabledTestMessage(env, chatId, userId);
+      return;
+    }
     await startTest(env, chatId, userId);
     return;
   }
@@ -812,6 +830,11 @@ async function handleCallback(query, env) {
   }
 
   if (data.startsWith("test:")) {
+    if (!TEST_FEATURE_ENABLED) {
+      await clearState(env, userId);
+      await sendDisabledTestMessage(env, chatId, userId);
+      return;
+    }
     const state = await getState(env, userId);
     const [, indexText, optionText] = data.split(":");
     await handleTestCallback(query, env, state, Number(indexText), Number(optionText));
@@ -1676,6 +1699,10 @@ async function finishCustomProofReject(env, message, state, text) {
 }
 
 async function startTest(env, chatId, userId) {
+  if (!TEST_FEATURE_ENABLED) {
+    await sendDisabledTestMessage(env, chatId, userId);
+    return;
+  }
   if (!(await checkCooldown(env, userId, "test", TEST_COOLDOWN_SECONDS))) {
     await sendMessage(env, chatId, "⏳ چند لحظه صبر کن و دوباره آزمون را شروع کن.");
     return;
@@ -1698,6 +1725,21 @@ async function startTest(env, chatId, userId) {
     keyboard(BACK_TO_MENU)
   );
   await sendQuestion(env, chatId, { index: 0, questionIds });
+}
+
+async function sendDisabledTestMessage(env, chatId, userId) {
+  if (!(await checkCooldown(env, userId, "test_disabled_notice", 60))) return;
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🧪 تست غیرت",
+      "",
+      "فعلاً غیرفعال است.",
+      "برای مدیریت مصرف پلن رایگان Cloudflare، این بخش موقتاً بسته شده و بعداً دوباره فعال می‌شود."
+    ].join("\n"),
+    keyboard(await getMainMenuForUser(env, userId))
+  );
 }
 
 async function sendQuestion(env, chatId, state) {
