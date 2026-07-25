@@ -611,9 +611,7 @@ async function handleMessage(message, env) {
       await sendDisabledTestMessage(env, chatId, userId);
       return;
     }
-    if (await checkCooldown(env, userId, "test_text_hint", 60)) {
-      await sendMessage(env, chatId, "🎛 لطفاً جواب آزمون را فقط با دکمه‌های زیر همان سوال انتخاب کن.");
-    }
+    await sendMessage(env, chatId, "🎛 لطفاً جواب آزمون را فقط با دکمه‌های زیر همان سوال انتخاب کن.");
     return;
   }
 
@@ -647,9 +645,7 @@ async function handleMessage(message, env) {
     return;
   }
 
-  if (await checkCooldown(env, userId, "idle_menu_hint", 60)) {
-    await sendMessage(env, chatId, "از منوی زیر انتخاب کن:", keyboard(await getMainMenuForUser(env, userId)));
-  }
+  await sendMessage(env, chatId, "از منوی زیر انتخاب کن:", keyboard(await getMainMenuForUser(env, userId)));
 }
 
 async function handleCallback(query, env) {
@@ -710,18 +706,14 @@ async function handleCallback(query, env) {
   if (data === "face:create") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
-    if (await checkCooldown(env, userId, "coming_soon_face", 60)) {
-      await sendMessage(env, chatId, "🎭 ساخت فیلم با چهره دلخواه\n\n🟢 این سرویس به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
-    }
+    await sendMessage(env, chatId, "🎭 ساخت فیلم با چهره دلخواه\n\n🟢 این سرویس به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
     return;
   }
 
   if (data === "gif:create") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
-    if (await checkCooldown(env, userId, "coming_soon_gif", 60)) {
-      await sendMessage(env, chatId, "🟢 ساخت گیف با کپشن بیغیرتی\n\nاین بخش به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
-    }
+    await sendMessage(env, chatId, "🟢 ساخت گیف با کپشن بیغیرتی\n\nاین بخش به زودی فعال می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
     return;
   }
 
@@ -1728,7 +1720,6 @@ async function startTest(env, chatId, userId) {
 }
 
 async function sendDisabledTestMessage(env, chatId, userId) {
-  if (!(await checkCooldown(env, userId, "test_disabled_notice", 60))) return;
   await sendMessage(
     env,
     chatId,
