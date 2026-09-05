@@ -2482,7 +2482,8 @@ async function schedulePost(env, query, postId, dateKey) {
   }
 
   const scheduleKind = getPostScheduleKind(post.kind);
-  if (await isPublishDateTaken(env, scheduleKind, dateKey, postId)) {
+  const posts = await getPosts(env);
+  if (isPublishDateTaken(posts, scheduleKind, dateKey, postId)) {
     await sendMessage(env, chatId, "این روز همین الان پر شده. دوباره تایید را بزن و یک روز آزاد انتخاب کن.");
     return;
   }
@@ -3502,6 +3503,14 @@ async function getAvailablePublishDates(env, scheduleKind, limit = 8) {
   const options = [];
   const now = Date.now();
   const todayParts = getTehranParts(new Date());
+  const posts = await getPosts(env);
+  const takenDates = new Set(
+    posts
+      .filter((post) => (post.scheduleKind || getPostScheduleKind(post.kind)) === scheduleKind)
+      .filter((post) => ["scheduled", "publishing", "published", "publish_failed"].includes(post.status))
+      .map((post) => post.scheduledDate)
+      .filter(Boolean)
+  );
 
   for (let offset = 0; options.length < limit && offset < 60; offset += 1) {
     const utcMs = Date.UTC(
@@ -3516,15 +3525,14 @@ async function getAvailablePublishDates(env, scheduleKind, limit = 8) {
     if (Date.parse(scheduledAt) <= now) continue;
 
     const dateKey = tehranDateKey(scheduledAt);
-    if (await isPublishDateTaken(env, scheduleKind, dateKey)) continue;
+    if (takenDates.has(dateKey)) continue;
     options.push({ dateKey, label: formatPublishDateLabel(scheduledAt) });
   }
 
   return options;
 }
 
-async function isPublishDateTaken(env, scheduleKind, dateKey, exceptPostId = "") {
-  const posts = await getPosts(env);
+function isPublishDateTaken(posts, scheduleKind, dateKey, exceptPostId = "") {
   return posts.some((post) => {
     if (post.id === exceptPostId) return false;
     if ((post.scheduleKind || getPostScheduleKind(post.kind)) !== scheduleKind) return false;
