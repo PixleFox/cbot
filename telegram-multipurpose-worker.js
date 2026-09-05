@@ -428,6 +428,7 @@ const ADMIN_MENU = [
     { text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" },
     { text: "📌 پست‌های انتشار", callback_data: "admin:list_scheduled_posts" }
   ],
+  [{ text: "🟡 پست‌های در انتظار بررسی", callback_data: "admin:list_pending_posts" }],
   [
     { text: "🧾 بررسی اثبات", callback_data: "admin:list_proofs" },
     { text: "🆘 پشتیبانی", callback_data: "admin:list_support" }
@@ -902,6 +903,12 @@ async function handleCallback(query, env) {
   if (data.startsWith("post:cancel:")) {
     if (!isAdmin(env, userId)) return;
     await cancelScheduledPost(env, query, data.replace("post:cancel:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:view:")) {
+    if (!isAdmin(env, userId)) return;
+    await viewPendingPost(env, query, data.replace("post:view:", ""));
     return;
   }
 
@@ -2620,6 +2627,11 @@ async function handleAdminCallback(env, query, data) {
     return;
   }
 
+  if (data === "admin:list_pending_posts") {
+    await listPendingPosts(env, chatId);
+    return;
+  }
+
   if (data === "admin:export_bookings") {
     await exportBookings(env, chatId);
     return;
@@ -2951,6 +2963,44 @@ async function listScheduledPosts(env, chatId) {
   }
 
   await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function listPendingPosts(env, chatId) {
+  const refs = await getList(env, "posts");
+  const pendingPosts = refs
+    .filter((post) => post.status === "pending")
+    .reverse()
+    .slice(0, 25);
+
+  if (!pendingPosts.length) {
+    await sendMessage(env, chatId, "🟢 پست در انتظار بررسی نداریم.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const lines = ["🟡 پست‌های در انتظار بررسی", ""];
+  const rows = [];
+  for (const post of pendingPosts) {
+    lines.push(`${formatDateTime(post.createdAt)} | ${postTypeLabel(post.kind)} | ${post.firstName || post.username || post.userId || "-"} | کد ${post.id}`);
+    rows.push([{ text: `👁 مشاهده ${postTypeLabel(post.kind)} | ${post.id}`, callback_data: `post:view:${post.id}` }]);
+  }
+  rows.push([{ text: "↩️ پنل ادمین", callback_data: "admin:stats" }]);
+  await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function viewPendingPost(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending") {
+    await sendMessage(env, chatId, "این پست پیدا نشد یا دیگر در انتظار بررسی نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const profile = await getProfile(env, post.userId);
+  await sendAdminPostPreview(env, post, {
+    id: post.userId,
+    username: String(profile?.username || post.username || "").replace(/^@/, ""),
+    first_name: profile?.name || post.firstName || ""
+  });
 }
 
 async function cancelScheduledPost(env, query, postId) {
