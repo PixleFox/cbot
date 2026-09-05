@@ -2967,10 +2967,20 @@ async function listScheduledPosts(env, chatId) {
 
 async function listPendingPosts(env, chatId) {
   const refs = await getList(env, "posts");
-  const pendingPosts = refs
+  const pendingRefs = refs
     .filter((post) => post.status === "pending")
     .reverse()
     .slice(0, 25);
+  const pendingPosts = [];
+
+  for (const ref of pendingRefs) {
+    const latest = await getJson(env, `post:${ref.id}`);
+    if (latest?.status === "pending") {
+      pendingPosts.push(latest);
+    } else if (latest?.status && latest.status !== ref.status) {
+      await updateListItem(env, "posts", ref.id, (item) => ({ ...item, status: latest.status }));
+    }
+  }
 
   if (!pendingPosts.length) {
     await sendMessage(env, chatId, "🟢 پست در انتظار بررسی نداریم.", keyboard(ADMIN_MENU));
@@ -2991,6 +3001,9 @@ async function viewPendingPost(env, query, postId) {
   const chatId = String(query.message.chat.id);
   const post = await getJson(env, `post:${postId}`);
   if (!post || post.status !== "pending") {
+    if (post?.status) {
+      await updateListItem(env, "posts", postId, (item) => ({ ...item, status: post.status }));
+    }
     await sendMessage(env, chatId, "این پست پیدا نشد یا دیگر در انتظار بررسی نیست.", keyboard(ADMIN_MENU));
     return;
   }
@@ -3439,11 +3452,11 @@ async function sendProofMedia(env, chatId, kind, fileId, caption, extra = {}) {
 
 function buildMediaCaption(caption, kind = "photo") {
   const tag = kind === "video" ? "#فیلم_ارسالی" : "#عکس_ارسالی";
-  return ["C CLUB", "", tag, cleanText(caption), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`].join("\n");
+  return ["C CLUB", "", tag, cleanText(caption), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`, "", "📩 ارسال محتوا در کانال:", "@cucksclubbot"].join("\n");
 }
 
 function buildConfessionText(text) {
-  return ["#اعترافات_شما", cleanText(text), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`].join("\n");
+  return ["#اعترافات_شما", cleanText(text), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`, "", "📩 ارسال محتوا در کانال:", "@cucksclubbot"].join("\n");
 }
 
 function postTypeLabel(kind) {
