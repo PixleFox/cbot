@@ -21,6 +21,7 @@ const TEST_FEATURE_ENABLED = false;
 const REMINDER_WINDOW_MINUTES = 30;
 const DEFAULT_POST_HOUR = 17;
 const DEFAULT_POST_MINUTE = 48;
+const BROADCAST_BATCH_SIZE = 12;
 const POST_REJECT_REASONS = {
   low_quality: "کیفیت نامناسب عکس یا فیلم",
   ethics: "عدم رعایت نکات اخلاقی در محتوا",
@@ -476,6 +477,7 @@ export default {
 
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(Promise.all([
+      processBroadcastQueue(env),
       sendDueBookingReminders(env),
       sendDueReleaseReminders(env),
       publishDuePosts(env)
@@ -523,6 +525,21 @@ async function handleMessage(message, env) {
   }
 
   const state = await getState(env, userId);
+
+  if (state?.mode === "admin_broadcast_compose") {
+    await handleBroadcastReply(env, message, { kind: "group", target: state.target }, text);
+    return;
+  }
+
+  if (state?.mode === "admin_broadcast_individual_target") {
+    await handleBroadcastReply(env, message, { kind: "individual_target" }, text);
+    return;
+  }
+
+  if (state?.mode === "admin_broadcast_individual_body") {
+    await handleBroadcastReply(env, message, { kind: "individual_body", userId: state.targetUserId }, text);
+    return;
+  }
 
   if (state?.mode === "admin_add_slot") {
     await finishAddSlot(env, message, text);
@@ -3251,6 +3268,8 @@ async function startBroadcastCompose(env, query, target) {
   };
   if (!labels[target]) return;
 
+  await setState(env, String(query.from.id), { mode: "admin_broadcast_compose", target });
+
   await sendMessage(
     env,
     chatId,
@@ -3260,6 +3279,7 @@ async function startBroadcastCompose(env, query, target) {
 }
 
 async function askBroadcastIndividualTarget(env, query) {
+  await setState(env, String(query.from.id), { mode: "admin_broadcast_individual_target" });
   await sendMessage(
     env,
     String(query.message.chat.id),
@@ -3297,6 +3317,11 @@ async function handleBroadcastReply(env, message, action, text) {
       return;
     }
 
+    await setState(env, String(message.from.id), {
+      mode: "admin_broadcast_individual_body",
+      targetUserId: String(profile.userId)
+    });
+
     await sendMessage(
       env,
       chatId,
@@ -3312,6 +3337,7 @@ async function handleBroadcastReply(env, message, action, text) {
   }
 
   if (action.kind === "individual_body") {
+    await clearState(env, String(message.from.id));
     try {
       await sendMessage(env, action.userId, body);
       await sendMessage(env, chatId, "✅ پیام برای کاربر ارسال شد.", keyboard(ADMIN_MENU));
@@ -3321,29 +3347,114 @@ async function handleBroadcastReply(env, message, action, text) {
     return;
   }
 
+  await clearState(env, String(message.from.id));
   await deliverBroadcast(env, chatId, action.target, body);
 }
 
 async function deliverBroadcast(env, chatId, target, body) {
-  const profiles = await getProfiles(env);
-  const recipients = profiles.filter((profile) => {
-    if (target === "all") return true;
-    if (target === "cuckolds") return profile.type === "cuckold";
-    return profile.type === "cuckold" && profile.cuckoldVerified;
-  });
+  const recipients = await getBroadcastAudience(env, target);
+  if (!recipients.length) {
+    await sendMessage(env, chatId, "هیچ کاربری در این گروه پیدا نشد.", keyboard(ADMIN_MENU));
+    return;
+  }
 
+  const firstBatch = recipients.slice(0, BROADCAST_BATCH_SIZE);
+  const result = await sendBroadcastBatch(env, firstBatch, body);
+  const remaining = recipients.slice(BROADCAST_BATCH_SIZE);
+
+  if (!remaining.length) {
+    await sendMessage(env, chatId, `📣 ارسال پیام تمام شد.\n\n✅ موفق: ${result.sent}\n❌ ناموفق: ${result.failed}`, keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const job = {
+    id: shortId(),
+    adminChatId: String(chatId),
+    body,
+    recipients: remaining,
+    sent: result.sent,
+    failed: result.failed,
+    total: recipients.length,
+    createdAt: new Date().toISOString()
+  };
+  const queue = (await getJson(env, "broadcast_queue")) || [];
+  queue.push(job);
+  await env.BOT_KV.put("broadcast_queue", JSON.stringify(queue.slice(-10)));
+
+  await sendMessage(
+    env,
+    chatId,
+    `📣 ارسال شروع شد.\n\n✅ ارسال‌شده: ${result.sent}\n⏳ باقی‌مانده: ${remaining.length}\n\nبقیه پیام‌ها خودکار و مرحله‌ای ارسال می‌شوند.`,
+    keyboard(ADMIN_MENU)
+  );
+}
+
+async function getBroadcastAudience(env, target) {
+  const snapshots = await getProfileSnapshots(env);
+  if (target === "all") return snapshots.map((profile) => String(profile.userId));
+  if (target === "cuckolds") {
+    return snapshots.filter((profile) => profile.type === "cuckold").map((profile) => String(profile.userId));
+  }
+
+  const proofRefs = await getList(env, "proofs");
+  const approvedIds = new Set(
+    proofRefs
+      .filter((proof) => proof.status === "approved" && proof.proofType !== "hotwife")
+      .map((proof) => String(proof.userId))
+  );
+  const preverified = new Set((await getPreverifiedCuckoldHandles(env)).map(normalizeTelegramHandle));
+  return snapshots
+    .filter((profile) => profile.type === "cuckold")
+    .filter((profile) => profile.cuckoldVerified || approvedIds.has(String(profile.userId)) || preverified.has(normalizeTelegramHandle(profile.username)))
+    .map((profile) => String(profile.userId));
+}
+
+async function getProfileSnapshots(env) {
+  const refs = await getList(env, "profiles");
+  const byUser = new Map();
+  for (const profile of refs) {
+    if (profile?.registered && profile.userId) byUser.set(String(profile.userId), profile);
+  }
+  return [...byUser.values()];
+}
+
+async function sendBroadcastBatch(env, recipients, body) {
   let sent = 0;
   let failed = 0;
-  for (const profile of recipients) {
+  for (const userId of recipients) {
     try {
-      await sendMessage(env, profile.userId, body);
+      await sendMessage(env, userId, body);
       sent += 1;
     } catch {
       failed += 1;
     }
   }
+  return { sent, failed };
+}
 
-  await sendMessage(env, chatId, `📣 ارسال پیام تمام شد.\n\n✅ موفق: ${sent}\n❌ ناموفق: ${failed}`, keyboard(ADMIN_MENU));
+async function processBroadcastQueue(env) {
+  const queue = (await getJson(env, "broadcast_queue")) || [];
+  if (!queue.length) return;
+
+  const job = queue[0];
+  const batch = job.recipients.slice(0, BROADCAST_BATCH_SIZE);
+  const result = await sendBroadcastBatch(env, batch, job.body);
+  job.sent += result.sent;
+  job.failed += result.failed;
+  job.recipients = job.recipients.slice(BROADCAST_BATCH_SIZE);
+
+  if (job.recipients.length) {
+    queue[0] = job;
+  } else {
+    queue.shift();
+    await sendMessage(
+      env,
+      job.adminChatId,
+      `✅ ارسال گروهی کامل شد.\n\nکل گیرنده‌ها: ${job.total}\n✅ موفق: ${job.sent}\n❌ ناموفق: ${job.failed}`,
+      keyboard(ADMIN_MENU)
+    );
+  }
+  await env.BOT_KV.put("broadcast_queue", JSON.stringify(queue));
 }
 
 async function exportProfiles(env, chatId) {

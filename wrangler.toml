@@ -4,7 +4,7 @@ compatibility_date = "2026-07-20"
 
 [vars]
 ADMIN_CHAT_ID = "7204112173"
-CHANNEL_ID = "@cucksclub"
+CHANNEL_ID = "@cuckzclub"
 
 [triggers]
 crons = ["*/5 * * * *"]
@@ -14,4 +14,4 @@ binding = "BOT_KV"
 id = "618015e3fa1f46028300b92e16cf5da6"
 
 # Keep BOT_TOKEN only in Cloudflare Secrets, never in GitHub.
-# The bot must be an admin in @cucksclub to publish approved posts.
+# The bot must be an admin in @cuckzclub to publish approved posts.

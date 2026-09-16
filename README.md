@@ -8,7 +8,7 @@ Cloudflare Worker bot for Telegram with:
 - 30-minute consultation reminders for admin and user
 - User post submission with admin approval
 - Text/photo post preview for admin
-- Approved posts sent to `@cucksclub`
+- Approved posts sent to `@cuckzclub`
 - Admin panel with Excel-compatible CSV export
 
 ## Cloudflare settings
@@ -17,7 +17,7 @@ Set these Worker variables/secrets in Cloudflare:
 
 - `BOT_TOKEN`
 - `ADMIN_CHAT_ID`
-- `CHANNEL_ID` is set in `wrangler.toml` as `@cucksclub`.
+- `CHANNEL_ID` is set in `wrangler.toml` as `@cuckzclub`.
 
 Create and bind a KV namespace with this exact binding name:
 
