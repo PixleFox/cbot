@@ -850,7 +850,13 @@ async function handleCallback(query, env) {
     return;
   }
 
-  if (data === "broadcast:individual" || data.startsWith("broadcast:individual:")) {
+  if (data.startsWith("bc:")) {
+    if (!isAdmin(env, userId)) return;
+    await sendBroadcastV2(env, query, data);
+    return;
+  }
+
+  if (data === "broadcast:individual" || data.startsWith("broadcast:individual:") || data.startsWith("bci:")) {
     if (!isAdmin(env, userId)) return;
     await startBroadcastIndividualTarget(env, query);
     return;
@@ -2658,6 +2664,7 @@ async function handleAdminCallback(env, query, data) {
   }
 
   if (data === "admin:broadcast_start") {
+    await clearBroadcastDraft(env, String(query.from.id));
     await setState(env, String(query.from.id), { mode: "admin_broadcast_text" });
     await sendMessage(env, chatId, "📣 متن پیام را بفرست.\n\nبعد از آن گروه دریافت‌کننده را انتخاب می‌کنی.\nلغو: /cancel");
     return;
@@ -3222,12 +3229,12 @@ async function finishBroadcastText(env, message, text) {
   }
 
   const draftId = await saveBroadcastDraft(env, userId, body);
-  await setState(env, userId, { mode: "admin_broadcast_target", body, draftId });
+  await clearState(env, userId);
   await sendMessage(env, chatId, "گیرنده‌ها را انتخاب کن:", keyboard([
-    [{ text: "همه کاربران", callback_data: `broadcast:send:${draftId}:all` }],
-    [{ text: "همه کاکولدها", callback_data: `broadcast:send:${draftId}:cuckolds` }],
-    [{ text: "کاکولدهای تایید شده", callback_data: `broadcast:send:${draftId}:verified_cuckolds` }],
-    [{ text: "ارسال به فرد خاص", callback_data: `broadcast:individual:${draftId}` }],
+    [{ text: "همه کاربران", callback_data: `bc:${draftId}:all` }],
+    [{ text: "همه کاکولدها", callback_data: `bc:${draftId}:cuckolds` }],
+    [{ text: "کاکولدهای تایید شده", callback_data: `bc:${draftId}:verified_cuckolds` }],
+    [{ text: "ارسال به فرد خاص", callback_data: `bci:${draftId}` }],
     [{ text: "لغو", callback_data: "menu:home" }]
   ]));
 }
@@ -3235,15 +3242,19 @@ async function finishBroadcastText(env, message, text) {
 async function startBroadcastIndividualTarget(env, query) {
   const chatId = String(query.message.chat.id);
   const userId = String(query.from.id);
-  const state = await getState(env, userId);
-  const draftId = query.data?.startsWith("broadcast:individual:") ? query.data.replace("broadcast:individual:", "") : state?.draftId || "";
-  const body = draftId ? await getBroadcastDraft(env, userId, draftId) : state?.body || await getBroadcastDraft(env, userId);
-  if (!body) {
+  const oldState = await getState(env, userId);
+  const draftId = query.data?.startsWith("bci:")
+    ? query.data.replace("bci:", "")
+    : query.data?.startsWith("broadcast:individual:")
+      ? query.data.replace("broadcast:individual:", "")
+      : oldState?.draftId || "";
+  const draft = await getBroadcastDraft(env, userId, draftId);
+  if (!draft?.body) {
     await sendMessage(env, chatId, "متن پیام پیدا نشد. دوباره از پنل ادمین شروع کن.", keyboard(ADMIN_MENU));
     return;
   }
 
-  await setState(env, userId, { ...(state || {}), mode: "admin_broadcast_individual", body, draftId });
+  await setState(env, userId, { mode: "admin_broadcast_individual", draftId });
   await sendMessage(
     env,
     chatId,
@@ -3262,8 +3273,8 @@ async function finishBroadcastIndividualTarget(env, message, state, text) {
   const chatId = String(message.chat.id);
   const userId = String(message.from.id);
   if (!isAdmin(env, userId)) return;
-  const body = state?.draftId ? await getBroadcastDraft(env, userId, state.draftId) : state?.body || await getBroadcastDraft(env, userId);
-  if (!body) {
+  const draft = await getBroadcastDraft(env, userId, state?.draftId || "");
+  if (!draft?.body) {
     await sendMessage(env, chatId, "متن پیام پیدا نشد. دوباره از پنل ادمین شروع کن.", keyboard(ADMIN_MENU));
     return;
   }
@@ -3276,7 +3287,7 @@ async function finishBroadcastIndividualTarget(env, message, state, text) {
   }
 
   try {
-    await sendMessage(env, profile.userId, body);
+    await sendMessage(env, profile.userId, draft.body);
   } catch (error) {
     await sendMessage(env, chatId, `❌ ارسال به این کاربر انجام نشد.\n\n${String(error?.message || error)}`);
     return;
@@ -3303,9 +3314,8 @@ async function sendBroadcast(env, query, target) {
 
   const state = await getState(env, userId);
   const { draftId, target: resolvedTarget } = parseBroadcastTarget(target);
-  const body = draftId || state?.draftId
-    ? await getBroadcastDraft(env, userId, draftId || state.draftId)
-    : state?.body || await getBroadcastDraft(env, userId);
+  const draft = draftId || state?.draftId ? await getBroadcastDraft(env, userId, draftId || state.draftId) : null;
+  const body = draft?.body || state?.body || "";
   if (!body) {
     await sendMessage(env, chatId, "متن پیام پیدا نشد. دوباره از پنل ادمین شروع کن.", keyboard(ADMIN_MENU));
     return;
@@ -3332,6 +3342,40 @@ async function sendBroadcast(env, query, target) {
 
   await clearState(env, userId);
   await clearBroadcastDraft(env, userId, draftId || state?.draftId || "");
+  await sendMessage(env, chatId, `📣 ارسال پیام تمام شد.\n\nارسال موفق: ${sent}\nناموفق: ${failed}`, keyboard(ADMIN_MENU));
+}
+
+async function sendBroadcastV2(env, query, data) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const [, draftId, target] = String(data || "").split(":");
+  const draft = await getBroadcastDraft(env, userId, draftId);
+  if (!draft?.body || !["all", "cuckolds", "verified_cuckolds"].includes(target)) {
+    await sendMessage(env, chatId, "متن پیام پیدا نشد یا دکمه قدیمی است. دوباره از پنل ادمین شروع کن.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const profiles = await getProfiles(env);
+  const recipients = profiles.filter((profile) => {
+    if (target === "all") return true;
+    if (target === "cuckolds") return profile.type === "cuckold";
+    if (target === "verified_cuckolds") return profile.type === "cuckold" && profile.cuckoldVerified;
+    return false;
+  });
+
+  let sent = 0;
+  let failed = 0;
+  for (const profile of recipients) {
+    try {
+      await sendMessage(env, profile.userId, draft.body);
+      sent += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  await clearState(env, userId);
+  await clearBroadcastDraft(env, userId, draftId);
   await sendMessage(env, chatId, `📣 ارسال پیام تمام شد.\n\nارسال موفق: ${sent}\nناموفق: ${failed}`, keyboard(ADMIN_MENU));
 }
 
@@ -3665,10 +3709,10 @@ async function saveBroadcastDraft(env, userId, body) {
 
 async function getBroadcastDraft(env, userId, draftId = "") {
   const resolvedDraftId = draftId || await env.BOT_KV.get(`broadcast_latest:${userId}`);
-  if (!resolvedDraftId) return "";
+  if (!resolvedDraftId) return null;
   const draft = await getJson(env, `broadcast_draft:${resolvedDraftId}`);
-  if (draft?.userId && String(draft.userId) !== String(userId)) return "";
-  return draft?.body || "";
+  if (draft?.userId && String(draft.userId) !== String(userId)) return null;
+  return draft || null;
 }
 
 async function clearBroadcastDraft(env, userId, draftId = "") {
