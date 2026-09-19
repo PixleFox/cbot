@@ -422,6 +422,10 @@ const POST_TYPE_MENU = [
 
 const ADMIN_MENU = [
   [
+    { text: "⭐ ساخت پست ویژه", callback_data: "admin:special_post_start" },
+    { text: "🗓 پست‌های ویژه", callback_data: "admin:list_special_posts" }
+  ],
+  [
     { text: "➕ زمان مشاوره", callback_data: "admin:add_slot" },
     { text: "💧 زمان تخلیه", callback_data: "admin:add_release_slot" }
   ],
@@ -478,6 +482,7 @@ export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(Promise.all([
       processBroadcastQueue(env),
+      publishDueSpecialPosts(env),
       sendDueBookingReminders(env),
       sendDueReleaseReminders(env),
       publishDuePosts(env)
@@ -525,6 +530,31 @@ async function handleMessage(message, env) {
   }
 
   const state = await getState(env, userId);
+
+  if (state?.mode === "special_wait_photo") {
+    await handleSpecialPostPhoto(env, message, state);
+    return;
+  }
+
+  if (state?.mode === "special_wait_text") {
+    await handleSpecialPostText(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "special_wait_button_text") {
+    await handleSpecialPostButtonText(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "special_wait_button_url") {
+    await handleSpecialPostButtonUrl(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "special_wait_schedule") {
+    await handleSpecialPostSchedule(env, message, state, text);
+    return;
+  }
 
   if (state?.mode === "admin_broadcast_compose") {
     await handleBroadcastReply(env, message, { kind: "group", target: state.target }, text);
@@ -874,6 +904,43 @@ async function handleCallback(query, env) {
   if (data === "broadcast:pick_individual") {
     if (!isAdmin(env, userId)) return;
     await askBroadcastIndividualTarget(env, query);
+    return;
+  }
+
+  if (data.startsWith("special:type:")) {
+    if (!isAdmin(env, userId)) return;
+    await startSpecialPostType(env, query, data.replace("special:type:", ""));
+    return;
+  }
+
+  if (data === "special:button:add") {
+    if (!isAdmin(env, userId)) return;
+    await askSpecialPostButtonText(env, query);
+    return;
+  }
+
+  if (data === "special:button:none") {
+    if (!isAdmin(env, userId)) return;
+    await askSpecialPostSchedule(env, query, false);
+    return;
+  }
+
+  if (data.startsWith("special:repeat:")) {
+    if (!isAdmin(env, userId)) return;
+    await finishSpecialPost(env, query, data.replace("special:repeat:", ""));
+    return;
+  }
+
+  if (data.startsWith("special:cancel:")) {
+    if (!isAdmin(env, userId)) return;
+    await cancelSpecialPost(env, query, data.replace("special:cancel:", ""));
+    return;
+  }
+
+  if (data === "special:abort") {
+    if (!isAdmin(env, userId)) return;
+    await clearState(env, userId);
+    await sendAdminPanel(env, chatId);
     return;
   }
 
@@ -2629,6 +2696,17 @@ async function handleAdminCallback(env, query, data) {
     return;
   }
 
+  if (data === "admin:special_post_start") {
+    await clearState(env, String(query.from.id));
+    await startSpecialPost(env, query);
+    return;
+  }
+
+  if (data === "admin:list_special_posts") {
+    await listSpecialPosts(env, chatId);
+    return;
+  }
+
   if (data === "admin:add_slot") {
     await setState(env, String(query.from.id), { mode: "admin_add_slot" });
     await sendMessage(
@@ -2786,6 +2864,8 @@ async function handleAdminCallback(env, query, data) {
     const verified = profiles.filter((profile) => profile.cuckoldVerified);
     const verifiedHotwives = profiles.filter((profile) => profile.hotwifeVerified);
     const preverifiedHandles = await getPreverifiedCuckoldHandles(env);
+    const specialPosts = await getSpecialPosts(env);
+    const activeSpecialPosts = specialPosts.filter((post) => post.status === "scheduled");
     await sendMessage(
       env,
       chatId,
@@ -2805,6 +2885,7 @@ async function handleAdminCallback(env, query, data) {
         `پست‌های منتشر شده: ${publishedPosts.length}`,
         `پست‌های رد شده: ${rejectedPosts.length}`,
         `پست‌های لغو شده: ${canceledPosts.length}`,
+        `پست‌های ویژه فعال: ${activeSpecialPosts.length}`,
         `درخواست‌های پشتیبانی: ${supportTickets.length}`,
         `پشتیبانی پاسخ نداده: ${openSupportTickets.length}`,
         `نتایج تست غیرت: ${tests.length}`
@@ -2952,6 +3033,273 @@ async function closeSlot(env, query, slotId) {
 
 async function sendAdminPanel(env, chatId) {
   await sendMessage(env, chatId, "🛠 پنل ادمین\n\nچه کاری می‌خواهی انجام بدهی؟", keyboard(ADMIN_MENU));
+}
+
+async function startSpecialPost(env, query) {
+  await sendMessage(
+    env,
+    String(query.message.chat.id),
+    [
+      "⭐ ساخت پست ویژه",
+      "",
+      "نوع پست را انتخاب کن. بعد از دریافت عکس و متن، می‌توانی دکمه لینک‌دار، زمان انتشار و تکرار را تنظیم کنی."
+    ].join("\n"),
+    keyboard([
+      [{ text: "🖼 عکس + متن", callback_data: "special:type:photo" }],
+      [{ text: "📝 فقط متن", callback_data: "special:type:text" }],
+      [{ text: "❌ لغو و برگشت", callback_data: "special:abort" }]
+    ])
+  );
+}
+
+async function startSpecialPostType(env, query, kind) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  if (!["photo", "text"].includes(kind)) return;
+
+  if (kind === "photo") {
+    await setState(env, userId, { mode: "special_wait_photo", draft: { kind: "photo" } });
+    await sendMessage(env, chatId, "🖼 عکس پست ویژه را بفرست.", specialPostCancelKeyboard());
+    return;
+  }
+
+  await setState(env, userId, { mode: "special_wait_text", draft: { kind: "text", fileId: "" } });
+  await sendMessage(env, chatId, "📝 متن کامل پست ویژه را بفرست.", specialPostCancelKeyboard());
+}
+
+async function handleSpecialPostPhoto(env, message, state) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  if (!message.photo?.length) {
+    await sendMessage(env, chatId, "❌ در این مرحله فقط عکس بفرست.", specialPostCancelKeyboard());
+    return;
+  }
+
+  const photo = message.photo[message.photo.length - 1];
+  await setState(env, userId, {
+    mode: "special_wait_text",
+    draft: { ...state.draft, kind: "photo", fileId: photo.file_id }
+  });
+  await sendMessage(env, chatId, "✅ عکس دریافت شد.\n\nحالا متن یا کپشن کامل پست را بفرست.", specialPostCancelKeyboard());
+}
+
+async function handleSpecialPostText(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+
+  const body = String(text || "").trim();
+  const maxLength = state.draft?.kind === "photo" ? 1000 : 4000;
+  if (!message.text || body.length < 1 || body.length > maxLength) {
+    await sendMessage(env, chatId, `❌ متن باید بین ۱ تا ${maxLength} کاراکتر باشد. دوباره بفرست.`, specialPostCancelKeyboard());
+    return;
+  }
+
+  await setState(env, userId, {
+    mode: "special_wait_button_choice",
+    draft: { ...state.draft, text: body }
+  });
+  await sendMessage(env, chatId, "🔗 برای این پست دکمه لینک‌دار می‌خواهی؟", keyboard([
+    [{ text: "➕ افزودن دکمه", callback_data: "special:button:add" }],
+    [{ text: "بدون دکمه", callback_data: "special:button:none" }],
+    [{ text: "❌ لغو و برگشت", callback_data: "special:abort" }]
+  ]));
+}
+
+async function askSpecialPostButtonText(env, query) {
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  if (!state?.draft?.text) {
+    await sendMessage(env, String(query.message.chat.id), "❌ اطلاعات پست پیدا نشد. دوباره از ساخت پست ویژه شروع کن.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  await setState(env, userId, { ...state, mode: "special_wait_button_text" });
+  await sendMessage(env, String(query.message.chat.id), "✏️ متن روی دکمه را بفرست.\n\nمثال: مشاهده و عضویت", specialPostCancelKeyboard());
+}
+
+async function handleSpecialPostButtonText(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const buttonText = cleanText(text);
+  if (!message.text || buttonText.length < 1 || buttonText.length > 64) {
+    await sendMessage(env, chatId, "❌ متن دکمه باید بین ۱ تا ۶۴ کاراکتر باشد.", specialPostCancelKeyboard());
+    return;
+  }
+
+  await setState(env, userId, {
+    ...state,
+    mode: "special_wait_button_url",
+    draft: { ...state.draft, buttonText }
+  });
+  await sendMessage(env, chatId, "🔗 لینک کامل دکمه را بفرست.\n\nمثال: https://t.me/cuckzclub", specialPostCancelKeyboard());
+}
+
+async function handleSpecialPostButtonUrl(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const buttonUrl = cleanText(text);
+  if (!isValidButtonUrl(buttonUrl)) {
+    await sendMessage(env, chatId, "❌ لینک معتبر نیست. لینک باید با https://، http:// یا tg:// شروع شود.", specialPostCancelKeyboard());
+    return;
+  }
+
+  await setState(env, userId, {
+    ...state,
+    mode: "special_wait_schedule",
+    draft: { ...state.draft, buttonUrl }
+  });
+  await sendMessage(env, chatId, specialPostSchedulePrompt(), specialPostCancelKeyboard());
+}
+
+async function askSpecialPostSchedule(env, query, withButton) {
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  if (!state?.draft?.text) {
+    await sendMessage(env, String(query.message.chat.id), "❌ اطلاعات پست پیدا نشد. دوباره از ساخت پست ویژه شروع کن.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const draft = withButton ? state.draft : { ...state.draft, buttonText: "", buttonUrl: "" };
+  await setState(env, userId, { ...state, mode: "special_wait_schedule", draft });
+  await sendMessage(env, String(query.message.chat.id), specialPostSchedulePrompt(), specialPostCancelKeyboard());
+}
+
+async function handleSpecialPostSchedule(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const scheduleText = normalizeDigits(cleanText(text));
+  const scheduledAt = scheduleText === "الان"
+    ? new Date(Date.now() + 5000).toISOString()
+    : parseTehranDateTime(scheduleText);
+  if (!scheduledAt) {
+    await sendMessage(env, chatId, `❌ زمان معتبر نیست.\n\n${specialPostSchedulePrompt()}`, specialPostCancelKeyboard());
+    return;
+  }
+
+  await setState(env, userId, {
+    ...state,
+    mode: "special_wait_repeat",
+    draft: { ...state.draft, scheduledAt }
+  });
+  await sendMessage(env, chatId, "🔁 تکرار پست را انتخاب کن:", keyboard([
+    [{ text: "فقط یک‌بار", callback_data: "special:repeat:none" }],
+    [{ text: "هر ساعت", callback_data: "special:repeat:hourly" }],
+    [{ text: "هر روز", callback_data: "special:repeat:daily" }],
+    [{ text: "هر هفته", callback_data: "special:repeat:weekly" }],
+    [{ text: "❌ لغو و برگشت", callback_data: "special:abort" }]
+  ]));
+}
+
+async function finishSpecialPost(env, query, recurrence) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  if (!["none", "hourly", "daily", "weekly"].includes(recurrence)) return;
+
+  const state = await getState(env, userId);
+  const draft = state?.draft;
+  if (state?.mode !== "special_wait_repeat" || !draft?.text || !draft?.scheduledAt) {
+    await sendMessage(env, chatId, "❌ اطلاعات پست کامل نیست. دوباره از ساخت پست ویژه شروع کن.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const post = {
+    id: shortId(),
+    kind: draft.kind,
+    fileId: draft.fileId || "",
+    text: draft.text,
+    buttonText: draft.buttonText || "",
+    buttonUrl: draft.buttonUrl || "",
+    scheduledAt: draft.scheduledAt,
+    recurrence,
+    status: "scheduled",
+    publishCount: 0,
+    createdAt: new Date().toISOString(),
+    createdBy: userId
+  };
+  const posts = await getSpecialPosts(env);
+  posts.push(post);
+  await saveSpecialPosts(env, posts);
+  await clearState(env, userId);
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "✅ پست ویژه ساخته و زمان‌بندی شد.",
+      "",
+      `کد: ${post.id}`,
+      `زمان اولین انتشار: ${formatDateTime(post.scheduledAt)}`,
+      `تکرار: ${specialRecurrenceLabel(post.recurrence)}`
+    ].join("\n")
+  );
+  await sendSpecialPostMessage(env, chatId, post, true);
+}
+
+async function listSpecialPosts(env, chatId) {
+  const posts = (await getSpecialPosts(env))
+    .filter((post) => post.status === "scheduled")
+    .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt));
+  if (!posts.length) {
+    await sendMessage(env, chatId, "⭐ پست ویژه زمان‌بندی‌شده‌ای وجود ندارد.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const lines = ["⭐ پست‌های ویژه زمان‌بندی‌شده", ""];
+  const rows = [];
+  for (const post of posts.slice(0, 25)) {
+    const preview = cleanText(post.text).slice(0, 45);
+    lines.push(`${formatDateTime(post.scheduledAt)} | ${specialRecurrenceLabel(post.recurrence)} | ${preview}${post.text.length > 45 ? "..." : ""} | کد ${post.id}`);
+    rows.push([{ text: `❌ لغو ${post.id}`, callback_data: `special:cancel:${post.id}` }]);
+  }
+  rows.push([{ text: "↩️ پنل ادمین", callback_data: "admin:panel" }]);
+  await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
+}
+
+async function cancelSpecialPost(env, query, postId) {
+  const posts = await getSpecialPosts(env);
+  const post = posts.find((item) => item.id === postId && item.status === "scheduled");
+  if (!post) {
+    await sendMessage(env, String(query.message.chat.id), "این پست ویژه پیدا نشد یا قبلاً متوقف شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+  post.status = "canceled";
+  post.canceledAt = new Date().toISOString();
+  post.canceledBy = String(query.from.id);
+  await saveSpecialPosts(env, posts);
+  await sendMessage(env, String(query.message.chat.id), `✅ انتشار پست ویژه متوقف شد.\nکد: ${post.id}`, keyboard(ADMIN_MENU));
+}
+
+function specialPostSchedulePrompt() {
+  return [
+    "🗓 زمان اولین انتشار را به وقت تهران بفرست.",
+    "",
+    "نمونه‌ها:",
+    "الان",
+    "امروز ۲۰:۳۰",
+    "فردا ۰۹:۰۰",
+    "یکشنبه ۱۸:۱۵",
+    "2026-09-25 14:00"
+  ].join("\n");
+}
+
+function specialPostCancelKeyboard() {
+  return keyboard([[{ text: "❌ لغو و برگشت پنل", callback_data: "special:abort" }]]);
+}
+
+function isValidButtonUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:", "tg:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function specialRecurrenceLabel(value) {
+  return ({ none: "فقط یک‌بار", hourly: "هر ساعت", daily: "هر روز", weekly: "هر هفته" })[value] || "-";
 }
 
 async function listBannedUsers(env, chatId) {
@@ -4367,6 +4715,75 @@ async function sendDueReleaseReminders(env) {
   }
 
   await env.BOT_KV.put("list:release_requests", JSON.stringify(requests));
+}
+
+async function getSpecialPosts(env) {
+  return (await getJson(env, "list:special_posts")) || [];
+}
+
+async function saveSpecialPosts(env, posts) {
+  await env.BOT_KV.put("list:special_posts", JSON.stringify(posts));
+}
+
+async function sendSpecialPostMessage(env, chatId, post, includeCancel = false) {
+  const rows = [];
+  if (post.buttonText && post.buttonUrl) rows.push([{ text: post.buttonText, url: post.buttonUrl }]);
+  if (includeCancel) rows.push([{ text: "❌ لغو انتشار", callback_data: `special:cancel:${post.id}` }]);
+  const extra = rows.length ? keyboard(rows) : {};
+
+  if (post.kind === "photo") {
+    return sendPhoto(env, chatId, post.fileId, post.text, extra);
+  }
+  return sendMessage(env, chatId, post.text, extra);
+}
+
+async function publishDueSpecialPosts(env) {
+  const posts = await getSpecialPosts(env);
+  const now = Date.now();
+  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
+  const due = posts
+    .filter((post) => post.status === "scheduled" && Date.parse(post.scheduledAt) <= now)
+    .filter((post) => !post.nextRetryAt || Date.parse(post.nextRetryAt) <= now)
+    .slice(0, 10);
+  if (!due.length) return;
+
+  for (const post of due) {
+    try {
+      await sendSpecialPostMessage(env, targetChannel, post);
+      post.publishCount = Number(post.publishCount || 0) + 1;
+      post.lastPublishedAt = new Date().toISOString();
+      post.lastError = "";
+      post.nextRetryAt = "";
+
+      if (post.recurrence === "none") {
+        post.status = "published";
+        post.publishedAt = post.lastPublishedAt;
+      } else {
+        post.scheduledAt = nextSpecialPostDate(post.scheduledAt, post.recurrence, now);
+      }
+    } catch (error) {
+      post.failureCount = Number(post.failureCount || 0) + 1;
+      post.lastError = String(error?.message || error);
+      post.lastErrorAt = new Date().toISOString();
+      post.nextRetryAt = new Date(now + 15 * 60 * 1000).toISOString();
+      await safeNotifyAdmin(env, `⚠️ انتشار پست ویژه ناموفق بود.\n\nکد: ${post.id}\n${post.lastError}`);
+    }
+  }
+
+  await saveSpecialPosts(env, posts);
+}
+
+function nextSpecialPostDate(previousDate, recurrence, now) {
+  const intervals = {
+    hourly: 60 * 60 * 1000,
+    daily: 24 * 60 * 60 * 1000,
+    weekly: 7 * 24 * 60 * 60 * 1000
+  };
+  const interval = intervals[recurrence];
+  if (!interval) return previousDate;
+  let next = Date.parse(previousDate) + interval;
+  while (next <= now) next += interval;
+  return new Date(next).toISOString();
 }
 
 async function publishDuePosts(env) {
