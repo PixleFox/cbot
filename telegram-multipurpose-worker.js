@@ -601,6 +601,16 @@ async function handleMessage(message, env) {
     return;
   }
 
+  if (state?.mode === "admin_edit_post_text") {
+    await finishEditPostText(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "admin_edit_post_media") {
+    await finishEditPostMedia(env, message, state);
+    return;
+  }
+
   if (state?.mode === "admin_reject_post_custom") {
     await finishCustomPostReject(env, message, state, text);
     return;
@@ -971,6 +981,31 @@ async function handleCallback(query, env) {
   if (data.startsWith("post:approve:")) {
     if (!isAdmin(env, userId)) return;
     await askPostPublishDate(env, query, data.replace("post:approve:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:edit_text:")) {
+    if (!isAdmin(env, userId)) return;
+    await startEditPostText(env, query, data.replace("post:edit_text:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:edit_media:")) {
+    if (!isAdmin(env, userId)) return;
+    await startEditPostMedia(env, query, data.replace("post:edit_media:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:edit_back:")) {
+    if (!isAdmin(env, userId)) return;
+    await clearState(env, userId);
+    await viewPendingPost(env, query, data.replace("post:edit_back:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:edit:")) {
+    if (!isAdmin(env, userId)) return;
+    await showPostEditMenu(env, query, data.replace("post:edit:", ""));
     return;
   }
 
@@ -2515,7 +2550,7 @@ async function savePostAndPreview(env, message, post) {
 
 async function sendAdminPostPreview(env, post, user) {
   const adminText = [
-    "📝 پست جدید برای تایید",
+    post.editedAt ? "✏️ پیش‌نمایش پست ویرایش‌شده" : "📝 پست جدید برای تایید",
     "",
     `کد: ${post.id}`,
     `کاربر: ${formatUser(user)}`,
@@ -2525,10 +2560,13 @@ async function sendAdminPostPreview(env, post, user) {
   ].join("\n");
 
   await sendMessage(env, env.ADMIN_CHAT_ID, adminText);
-  const controls = keyboard([[
-    { text: "✅ تایید و زمان‌بندی", callback_data: `post:approve:${post.id}` },
-    { text: "❌ رد", callback_data: `post:reject:${post.id}` }
-  ]]);
+  const controls = keyboard([
+    [
+      { text: "✅ تایید و زمان‌بندی", callback_data: `post:approve:${post.id}` },
+      { text: "❌ رد", callback_data: `post:reject:${post.id}` }
+    ],
+    [{ text: "✏️ ویرایش پست", callback_data: `post:edit:${post.id}` }]
+  ]);
 
   if (post.kind === "photo") {
     await sendPhoto(env, env.ADMIN_CHAT_ID, post.fileId, post.finalText, controls);
@@ -3395,6 +3433,128 @@ async function viewPendingPost(env, query, postId) {
     return;
   }
 
+  const profile = await getProfile(env, post.userId);
+  await sendAdminPostPreview(env, post, {
+    id: post.userId,
+    username: String(profile?.username || post.username || "").replace(/^@/, ""),
+    first_name: profile?.name || post.firstName || ""
+  });
+}
+
+async function showPostEditMenu(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending") {
+    await sendMessage(env, chatId, "این پست دیگر قابل ویرایش نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const rows = [[{ text: "📝 ویرایش متن", callback_data: `post:edit_text:${postId}` }]];
+  if (["photo", "video"].includes(post.kind)) {
+    rows.push([{ text: "🖼 جایگزینی عکس یا فیلم", callback_data: `post:edit_media:${postId}` }]);
+  }
+  rows.push([{ text: "↩️ برگشت به پیش‌نمایش", callback_data: `post:edit_back:${postId}` }]);
+  await sendMessage(env, chatId, `✏️ چه بخشی از پست را ویرایش می‌کنی؟\n\nکد: ${postId}`, keyboard(rows));
+}
+
+async function startEditPostText(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending") {
+    await sendMessage(env, chatId, "این پست دیگر قابل ویرایش نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+  await setState(env, String(query.from.id), { mode: "admin_edit_post_text", postId });
+  await sendMessage(env, chatId, "📝 متن جدید پست را کامل بفرست.", keyboard([
+    [{ text: "↩️ لغو و برگشت", callback_data: `post:edit_back:${postId}` }]
+  ]));
+}
+
+async function finishEditPostText(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+  const post = await getJson(env, `post:${state.postId}`);
+  if (!post || post.status !== "pending") {
+    await clearState(env, userId);
+    await sendMessage(env, chatId, "این پست دیگر قابل ویرایش نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const body = String(text || "").trim();
+  const maxLength = post.kind === "confession" ? MAX_TEXT_LENGTH : MAX_PHOTO_CAPTION_LENGTH;
+  if (!message.text || body.length < 1 || body.length > maxLength) {
+    await sendMessage(env, chatId, `❌ متن باید بین ۱ تا ${maxLength} کاراکتر باشد. دوباره بفرست.`);
+    return;
+  }
+
+  post.text = body;
+  post.finalText = post.kind === "confession" ? buildConfessionText(body) : buildMediaCaption(body, post.kind);
+  post.editedAt = new Date().toISOString();
+  post.editedBy = userId;
+  await saveEditedPendingPost(env, post);
+  await clearState(env, userId);
+  await sendMessage(env, chatId, "✅ متن پست ویرایش شد.");
+  await sendStoredPostPreview(env, post);
+}
+
+async function startEditPostMedia(env, query, postId) {
+  const chatId = String(query.message.chat.id);
+  const post = await getJson(env, `post:${postId}`);
+  if (!post || post.status !== "pending" || !["photo", "video"].includes(post.kind)) {
+    await sendMessage(env, chatId, "عکس یا فیلم این پست قابل ویرایش نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+  await setState(env, String(query.from.id), { mode: "admin_edit_post_media", postId });
+  await sendMessage(env, chatId, "🖼 عکس یا فیلم جدید را بفرست.", keyboard([
+    [{ text: "↩️ لغو و برگشت", callback_data: `post:edit_back:${postId}` }]
+  ]));
+}
+
+async function finishEditPostMedia(env, message, state) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!isAdmin(env, userId)) return;
+  const post = await getJson(env, `post:${state.postId}`);
+  if (!post || post.status !== "pending") {
+    await clearState(env, userId);
+    await sendMessage(env, chatId, "این پست دیگر قابل ویرایش نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const media = normalizeMediaFile(message);
+  if (!media.ok) {
+    await sendMessage(env, chatId, `❌ ${media.error}\n\nعکس یا فیلم جدید را بفرست.`);
+    return;
+  }
+
+  post.kind = media.kind;
+  post.fileId = media.fileId;
+  post.scheduleKind = getPostScheduleKind(media.kind);
+  post.finalText = buildMediaCaption(post.text, media.kind);
+  post.editedAt = new Date().toISOString();
+  post.editedBy = userId;
+  await saveEditedPendingPost(env, post);
+  await clearState(env, userId);
+  await sendMessage(env, chatId, "✅ عکس یا فیلم پست جایگزین شد.");
+  await sendStoredPostPreview(env, post);
+}
+
+async function saveEditedPendingPost(env, post) {
+  await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
+  await updateListItem(env, "posts", post.id, (item) => ({
+    ...item,
+    kind: post.kind,
+    text: post.text,
+    finalText: post.finalText,
+    fileId: post.fileId,
+    scheduleKind: post.scheduleKind,
+    editedAt: post.editedAt,
+    editedBy: post.editedBy
+  }));
+}
+
+async function sendStoredPostPreview(env, post) {
   const profile = await getProfile(env, post.userId);
   await sendAdminPostPreview(env, post, {
     id: post.userId,
