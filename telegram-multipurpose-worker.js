@@ -2957,7 +2957,13 @@ async function finishAddSlot(env, message, text) {
   await env.BOT_KV.put(`slot:${slot.id}`, JSON.stringify(slot));
   await putListItem(env, "slots", slot);
   await clearState(env, userId);
-  await sendMessage(env, chatId, `✅ زمان اضافه شد:\n${slot.label}`, keyboard(ADMIN_MENU));
+  const notification = await notifyVerifiedCuckoldsAboutSlot(env, slot);
+  await sendMessage(
+    env,
+    chatId,
+    `✅ زمان اضافه شد:\n${slot.label}\n\n📣 اعلان برای ${notification.total} کاکولد تاییدشده ثبت شد.`,
+    keyboard(ADMIN_MENU)
+  );
 }
 
 async function finishAddReleaseSlot(env, message, text) {
@@ -2984,7 +2990,13 @@ async function finishAddReleaseSlot(env, message, text) {
   await env.BOT_KV.put(`slot:${slot.id}`, JSON.stringify(slot));
   await putListItem(env, "slots", slot);
   await clearState(env, userId);
-  await sendMessage(env, chatId, `✅ زمان تخلیه اضافه شد:\n${slot.label}`, keyboard(ADMIN_MENU));
+  const notification = await notifyVerifiedCuckoldsAboutSlot(env, slot);
+  await sendMessage(
+    env,
+    chatId,
+    `✅ زمان تخلیه اضافه شد:\n${slot.label}\n\n📣 اعلان برای ${notification.total} کاکولد تاییدشده ثبت شد.`,
+    keyboard(ADMIN_MENU)
+  );
 }
 
 async function finishPreverifiedCuckoldIds(env, message, text) {
@@ -3917,6 +3929,43 @@ async function getBroadcastAudience(env, target) {
     .map((profile) => String(profile.userId));
 }
 
+async function notifyVerifiedCuckoldsAboutSlot(env, slot) {
+  const recipients = await getBroadcastAudience(env, "verified_cuckolds");
+  if (!recipients.length) return { total: 0, sent: 0, queued: 0 };
+
+  const isRelease = slot.purpose === "release";
+  const body = [
+    isRelease ? "💧 زمان جدید تخلیه آب بیغیرتی آزاد شد" : "📅 زمان جدید مشاوره آزاد شد",
+    "",
+    `🕐 زمان: ${slot.label}`,
+    "",
+    "این زمان هنوز خالی است. قبل از اینکه توسط فرد دیگری رزرو شود، سریع از منوی ربات رزرو کن.",
+    "",
+    isRelease ? "مسیر رزرو: تخلیه آب بیغیرتی" : "مسیر رزرو: نوبت مشاوره"
+  ].join("\n");
+
+  const firstBatch = recipients.slice(0, BROADCAST_BATCH_SIZE);
+  const result = await sendBroadcastBatch(env, firstBatch, body);
+  const remaining = recipients.slice(BROADCAST_BATCH_SIZE);
+  if (remaining.length) {
+    const queue = (await getJson(env, "broadcast_queue")) || [];
+    queue.push({
+      id: shortId(),
+      adminChatId: String(env.ADMIN_CHAT_ID),
+      body,
+      recipients: remaining,
+      sent: result.sent,
+      failed: result.failed,
+      total: recipients.length,
+      notifyAdminOnComplete: false,
+      createdAt: new Date().toISOString()
+    });
+    await env.BOT_KV.put("broadcast_queue", JSON.stringify(queue.slice(-10)));
+  }
+
+  return { total: recipients.length, sent: result.sent, queued: remaining.length };
+}
+
 async function getProfileSnapshots(env) {
   const refs = await getList(env, "profiles");
   const byUser = new Map();
@@ -3955,12 +4004,14 @@ async function processBroadcastQueue(env) {
     queue[0] = job;
   } else {
     queue.shift();
-    await sendMessage(
-      env,
-      job.adminChatId,
-      `✅ ارسال گروهی کامل شد.\n\nکل گیرنده‌ها: ${job.total}\n✅ موفق: ${job.sent}\n❌ ناموفق: ${job.failed}`,
-      keyboard(ADMIN_MENU)
-    );
+    if (job.notifyAdminOnComplete !== false) {
+      await sendMessage(
+        env,
+        job.adminChatId,
+        `✅ ارسال گروهی کامل شد.\n\nکل گیرنده‌ها: ${job.total}\n✅ موفق: ${job.sent}\n❌ ناموفق: ${job.failed}`,
+        keyboard(ADMIN_MENU)
+      );
+    }
   }
   await env.BOT_KV.put("broadcast_queue", JSON.stringify(queue));
 }
