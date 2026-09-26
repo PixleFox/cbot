@@ -22,6 +22,14 @@ const REMINDER_WINDOW_MINUTES = 30;
 const DEFAULT_POST_HOUR = 17;
 const DEFAULT_POST_MINUTE = 48;
 const BROADCAST_BATCH_SIZE = 12;
+const POINTS_VERSION = 1;
+const POINT_REWARDS = { photo: 3, video: 5, confession: 1, proof: 1 };
+const SERVICE_COSTS = { release: 5, custom_video: 15, gif: 10, custom_image: 5, consultation: 1 };
+const CUSTOM_IMAGE_SCENARIOS = {
+  selfie_two_men: "بین دو مرد، در حال گرفتن سلفی",
+  magazine_model: "مدل عکس روی مجله با لباس سکسی",
+  bed_selfie: "روی تخت، در آغوش یک مرد و در حال گرفتن سلفی"
+};
 const POST_REJECT_REASONS = {
   low_quality: "کیفیت نامناسب عکس یا فیلم",
   ethics: "عدم رعایت نکات اخلاقی در محتوا",
@@ -357,19 +365,21 @@ const TEST_TYPES = [
 
 const MAIN_MENU = [
   [{ text: "🧪 تست غیرت", callback_data: "menu:test" }],
+  [{ text: "⭐ امتیاز من", callback_data: "points:show" }],
   [
     { text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" },
     { text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }
   ],
-  [{ text: "💧 تخلیه آب بیغیرتی", callback_data: "release:start" }],
+  [{ text: "💧 تخلیه آب بیغیرتی | ۵ ⭐", callback_data: "release:start" }],
   [
     { text: "🔞 عضویت در گروه VIP", callback_data: "vip:join" },
     { text: "🔁 عضویت در گروه تبادل", callback_data: "exchange:join" }
   ],
-  [{ text: "🎭 ساخت فیلم با چهره دلخواه", callback_data: "face:create" }],
-  [{ text: "🟢 ساخت گیف با کپشن بیغیرتی", callback_data: "gif:create" }],
+  [{ text: "🖼 ساخت عکس با چهره دلخواه | ۵ ⭐", callback_data: "custom_image:start" }],
+  [{ text: "🎭 ساخت فیلم با چهره دلخواه | ۱۵ ⭐", callback_data: "face:create" }],
+  [{ text: "🟢 ساخت گیف با کپشن بیغیرتی | ۱۰ ⭐", callback_data: "gif:create" }],
   [
-    { text: "📅 نوبت مشاوره", callback_data: "menu:booking" },
+    { text: "📅 مشاوره | ۱ ⭐", callback_data: "menu:booking" },
     { text: "🆘 پشتیبانی", callback_data: "support:start" }
   ],
   [
@@ -421,6 +431,7 @@ const POST_TYPE_MENU = [
 ];
 
 const ADMIN_MENU = [
+  [{ text: "🖼 درخواست‌های ساخت عکس", callback_data: "admin:list_custom_images" }],
   [
     { text: "⭐ ساخت پست ویژه", callback_data: "admin:special_post_start" },
     { text: "🗓 پست‌های ویژه", callback_data: "admin:list_special_posts" }
@@ -483,6 +494,7 @@ export default {
     ctx.waitUntil(Promise.all([
       processBroadcastQueue(env),
       publishDueSpecialPosts(env),
+      migrateLegacyPointsBatch(env),
       sendDueBookingReminders(env),
       sendDueReleaseReminders(env),
       publishDuePosts(env)
@@ -530,6 +542,16 @@ async function handleMessage(message, env) {
   }
 
   const state = await getState(env, userId);
+
+  if (state?.mode === "custom_image_wait_photo") {
+    await handleCustomImagePhoto(env, message);
+    return;
+  }
+
+  if (state?.mode === "admin_custom_image_reply") {
+    await finishCustomImageReply(env, message, state);
+    return;
+  }
 
   if (state?.mode === "special_wait_photo") {
     await handleSpecialPostPhoto(env, message, state);
@@ -753,6 +775,55 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data === "points:show") {
+    if (!(await ensureRegistered(env, chatId, userId))) return;
+    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+    await showPoints(env, chatId, userId);
+    return;
+  }
+
+  if (data === "custom_image:start") {
+    if (!(await ensureRegistered(env, chatId, userId))) return;
+    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+    await startCustomImageRequest(env, chatId, userId);
+    return;
+  }
+
+  if (data.startsWith("custom_image:scenario:")) {
+    await selectCustomImageScenario(env, query, data.replace("custom_image:scenario:", ""));
+    return;
+  }
+
+  if (data === "custom_image:confirm") {
+    await confirmCustomImageRequest(env, query);
+    return;
+  }
+
+  if (data.startsWith("custom_image:reply:")) {
+    if (!isAdmin(env, userId)) return;
+    await startCustomImageReply(env, query, data.replace("custom_image:reply:", ""));
+    return;
+  }
+
+  if (data.startsWith("custom_image:view:")) {
+    if (!isAdmin(env, userId)) return;
+    await viewCustomImageRequest(env, query, data.replace("custom_image:view:", ""));
+    return;
+  }
+
+  if (data.startsWith("custom_image:reject:")) {
+    if (!isAdmin(env, userId)) return;
+    await rejectCustomImageRequest(env, query, data.replace("custom_image:reject:", ""));
+    return;
+  }
+
+  if (data.startsWith("service:cancel:")) {
+    if (!isAdmin(env, userId)) return;
+    const [, , kind, requestId] = data.split(":");
+    await cancelPointServiceRequest(env, query, kind, requestId);
+    return;
+  }
+
   if (data === "exchange:join") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     await sendExchangeGroup(env, chatId);
@@ -854,6 +925,7 @@ async function handleCallback(query, env) {
 
   if (data === "menu:booking") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
+    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
     await startBooking(env, chatId, userId);
     return;
   }
@@ -1240,6 +1312,10 @@ async function finishRegistration(env, query, type) {
     cuckoldVerifiedAt: preverifiedCuckold ? new Date().toISOString() : "",
     cuckoldPreverified: preverifiedCuckold,
     hotwifeVerified: false,
+    pointsVersion: POINTS_VERSION,
+    pointsBalance: 0,
+    pointsLifetimeEarned: 0,
+    pointsLifetimeSpent: 0,
     createdAt: new Date().toISOString()
   };
 
@@ -1722,6 +1798,9 @@ async function approveProof(env, query, proofId) {
     return;
   }
 
+  const profileBeforeApproval = await getProfile(env, proof.userId);
+  const hadPointAccount = profileBeforeApproval?.pointsVersion === POINTS_VERSION;
+
   proof.status = "approved";
   proof.reviewedAt = new Date().toISOString();
   proof.reviewedBy = String(query.from.id);
@@ -1747,9 +1826,16 @@ async function approveProof(env, query, proofId) {
     await env.BOT_KV.put(`profile:${proof.userId}`, JSON.stringify(profile));
   }
 
+  let pointResult = null;
+  if (proof.proofType !== "hotwife") {
+    pointResult = hadPointAccount
+      ? await changePoints(env, proof.userId, POINT_REWARDS.proof, `earn:proof:${proof.id}`, "تکمیل اثبات کاکولدی")
+      : { ok: true, balance: Number((await ensurePointAccount(env, proof.userId))?.pointsBalance || 0) };
+  }
+
   const approvedText = proof.proofType === "hotwife"
     ? "✅ تایید شد. شما به عنوان هاتوایف تایید شدید و اکنون می‌توانید محتوای عکس و فیلم ارسال کنید."
-    : "✅ تایید شد. شما به عنوان کاکولد ثبت نام شدید و اکنون می‌توانید از همه قابلیت‌های ربات استفاده کنید.";
+    : `✅ تایید شد. شما به عنوان کاکولد ثبت نام شدید و اکنون می‌توانید از همه قابلیت‌های ربات استفاده کنید.\n\n⭐ موجودی امتیاز: ${pointResult?.balance || 0}`;
   await sendMessage(env, proof.userId, approvedText, keyboard(await getMainMenuForUser(env, proof.userId)));
   await sendMessage(env, chatId, `✅ درخواست تایید شد.\nکد: ${proofId}`);
 }
@@ -1974,6 +2060,11 @@ async function finishTest(env, chatId, userId, state) {
 }
 
 async function startBooking(env, chatId, userId) {
+  const pointProfile = await ensurePointAccount(env, userId);
+  if (Number(pointProfile?.pointsBalance || 0) < SERVICE_COSTS.consultation) {
+    await sendInsufficientPoints(env, chatId, userId, SERVICE_COSTS.consultation);
+    return;
+  }
   if (!(await checkCooldown(env, userId, "booking", BOOKING_COOLDOWN_SECONDS))) {
     await sendMessage(env, chatId, "⏳ درخواست نوبت خیلی سریع تکرار شده. کمی بعد دوباره امتحان کن.");
     return;
@@ -2058,6 +2149,17 @@ async function finishBookingWithSlot(env, query, state, slotId) {
   }
 
   const bookingId = shortId();
+  const pointCharge = await spendPoints(
+    env,
+    userId,
+    SERVICE_COSTS.consultation,
+    `spend:consultation:${bookingId}`,
+    "رزرو مشاوره"
+  );
+  if (!pointCharge.ok) {
+    await sendInsufficientPoints(env, chatId, userId, SERVICE_COSTS.consultation);
+    return;
+  }
   const booking = {
     id: bookingId,
     userId,
@@ -2070,6 +2172,8 @@ async function finishBookingWithSlot(env, query, state, slotId) {
     slotLabel: slot.label,
     startsAt: slot.startsAt || "",
     reminderSent: false,
+    pointsCost: SERVICE_COSTS.consultation,
+    pointsTransactionId: `spend:consultation:${bookingId}`,
     status: "scheduled",
     createdAt: new Date().toISOString()
   };
@@ -2077,21 +2181,27 @@ async function finishBookingWithSlot(env, query, state, slotId) {
   slot.status = "booked";
   slot.bookedBy = userId;
   slot.bookingId = bookingId;
-  await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
-  await updateListItem(env, "slots", slotId, (item) => ({ ...item, status: "booked", bookedBy: userId, bookingId }));
-  await env.BOT_KV.put(`booking:${bookingId}`, JSON.stringify(booking));
-  await putListItem(env, "bookings", booking);
+  try {
+    await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
+    await updateListItem(env, "slots", slotId, (item) => ({ ...item, status: "booked", bookedBy: userId, bookingId }));
+    await env.BOT_KV.put(`booking:${bookingId}`, JSON.stringify(booking));
+    await putListItem(env, "bookings", booking);
+  } catch (error) {
+    await refundPoints(env, userId, SERVICE_COSTS.consultation, `refund:consultation:${bookingId}`, "بازگشت امتیاز رزرو ناموفق");
+    throw error;
+  }
   await clearState(env, userId);
 
   await sendMessage(
     env,
     chatId,
-    [`✅ نوبتت ثبت شد`, "", `کد: ${bookingId}`, `زمان: ${slot.label}`, "", "لطفاً در همین زمان آماده باش."].join("\n"),
+    [`✅ نوبتت ثبت شد`, "", `کد: ${bookingId}`, `زمان: ${slot.label}`, `هزینه: ${SERVICE_COSTS.consultation} ⭐`, `موجودی: ${pointCharge.balance} ⭐`, "", "لطفاً در همین زمان آماده باش."].join("\n"),
     keyboard(await getMainMenuForUser(env, userId))
   );
 
-  await notifyAdmin(
+  await sendMessage(
     env,
+    env.ADMIN_CHAT_ID,
     [
       "📅 نوبت جدید ثبت شد",
       "",
@@ -2100,8 +2210,10 @@ async function finishBookingWithSlot(env, query, state, slotId) {
       `کاربر: ${formatUser(query.from)}`,
       `نام: ${booking.name}`,
       `تماس: ${booking.contact}`,
-      `موضوع: ${booking.topic}`
-    ].join("\n")
+      `موضوع: ${booking.topic}`,
+      `هزینه: ${SERVICE_COSTS.consultation} ⭐`
+    ].join("\n"),
+    keyboard([[{ text: "❌ لغو و بازگشت امتیاز", callback_data: `service:cancel:booking:${bookingId}` }]])
   );
 }
 
@@ -2209,6 +2321,11 @@ async function sendAdminSupportTicket(env, ticket) {
 
 async function startReleaseFlow(env, chatId, userId) {
   if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+  const pointProfile = await ensurePointAccount(env, userId);
+  if (Number(pointProfile?.pointsBalance || 0) < SERVICE_COSTS.release) {
+    await sendInsufficientPoints(env, chatId, userId, SERVICE_COSTS.release);
+    return;
+  }
 
   await setState(env, userId, { mode: "release_voice" });
   await sendMessage(
@@ -2273,6 +2390,17 @@ async function finishReleaseWithSlot(env, query, state, slotId) {
   }
 
   const requestId = shortId();
+  const pointCharge = await spendPoints(
+    env,
+    userId,
+    SERVICE_COSTS.release,
+    `spend:release:${requestId}`,
+    "رزرو تخلیه آب بیغیرتی"
+  );
+  if (!pointCharge.ok) {
+    await sendInsufficientPoints(env, chatId, userId, SERVICE_COSTS.release);
+    return;
+  }
   const request = {
     id: requestId,
     userId,
@@ -2285,6 +2413,8 @@ async function finishReleaseWithSlot(env, query, state, slotId) {
     startsAt: slot.startsAt || "",
     status: "scheduled",
     type: "release",
+    pointsCost: SERVICE_COSTS.release,
+    pointsTransactionId: `spend:release:${requestId}`,
     reminderSent: false,
     createdAt: new Date().toISOString()
   };
@@ -2292,30 +2422,274 @@ async function finishReleaseWithSlot(env, query, state, slotId) {
   slot.status = "booked";
   slot.bookedBy = userId;
   slot.releaseRequestId = requestId;
-  await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
-  await updateListItem(env, "slots", slotId, (item) => ({ ...item, status: "booked", bookedBy: userId, releaseRequestId: requestId }));
-  await env.BOT_KV.put(`release:${requestId}`, JSON.stringify(request));
-  await putListItem(env, "release_requests", request);
+  try {
+    await env.BOT_KV.put(`slot:${slotId}`, JSON.stringify(slot));
+    await updateListItem(env, "slots", slotId, (item) => ({ ...item, status: "booked", bookedBy: userId, releaseRequestId: requestId }));
+    await env.BOT_KV.put(`release:${requestId}`, JSON.stringify(request));
+    await putListItem(env, "release_requests", request);
+  } catch (error) {
+    await refundPoints(env, userId, SERVICE_COSTS.release, `refund:release:${requestId}`, "بازگشت امتیاز رزرو ناموفق");
+    throw error;
+  }
   await clearState(env, userId);
 
   await sendMessage(
     env,
     chatId,
-    [`✅ درخواست ثبت شد`, "", `کد: ${requestId}`, `زمان: ${slot.label}`].join("\n"),
+    [`✅ درخواست ثبت شد`, "", `کد: ${requestId}`, `زمان: ${slot.label}`, `هزینه: ${SERVICE_COSTS.release} ⭐`, `موجودی: ${pointCharge.balance} ⭐`].join("\n"),
     keyboard(await getMainMenuForUser(env, userId))
   );
 
-  await notifyAdmin(
+  await sendMessage(
     env,
+    env.ADMIN_CHAT_ID,
     [
       "💧 درخواست تخلیه آب بیغیرتی",
       "",
       `کد: ${requestId}`,
       `زمان: ${slot.label}`,
-      `کاربر: ${formatUser(query.from)}`
-    ].join("\n")
+      `کاربر: ${formatUser(query.from)}`,
+      `هزینه: ${SERVICE_COSTS.release} ⭐`
+    ].join("\n"),
+    keyboard([[{ text: "❌ لغو و بازگشت امتیاز", callback_data: `service:cancel:release:${requestId}` }]])
   );
   await sendVoice(env, env.ADMIN_CHAT_ID, state.voiceFileId, `🎙 وویس تخلیه - کد ${requestId}`);
+}
+
+async function startCustomImageRequest(env, chatId, userId) {
+  const profile = await ensurePointAccount(env, userId);
+  if (Number(profile?.pointsBalance || 0) < SERVICE_COSTS.custom_image) {
+    await sendInsufficientPoints(env, chatId, userId, SERVICE_COSTS.custom_image);
+    return;
+  }
+  await setState(env, userId, { mode: "custom_image_wait_photo" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🖼 ساخت عکس با چهره دلخواه",
+      "",
+      `هزینه درخواست: ${SERVICE_COSTS.custom_image} ⭐`,
+      `موجودی شما: ${profile.pointsBalance} ⭐`,
+      "",
+      "یک عکس واضح و باکیفیت از روبه‌رو بفرست.",
+      "صورت کامل، نور مناسب و بدون عینک یا پوشاندن چهره باشد."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
+}
+
+async function handleCustomImagePhoto(env, message) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!message.photo?.length) {
+    await sendMessage(env, chatId, "❌ فقط یک عکس واضح از روبه‌رو بفرست.", keyboard(BACK_TO_MENU));
+    return;
+  }
+  const photo = message.photo[message.photo.length - 1];
+  if (Number(photo.width || 0) < 600 || Number(photo.height || 0) < 600) {
+    await sendMessage(env, chatId, "❌ کیفیت عکس پایین است. عکس واضح‌تری بفرست که حداقل ۶۰۰ پیکسل باشد.", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  await setState(env, userId, { mode: "custom_image_wait_scenario", sourcePhotoFileId: photo.file_id });
+  await sendMessage(env, chatId, "✅ عکس دریافت شد.\n\nکدام تصویر ساخته شود؟", keyboard([
+    [{ text: "۱. سلفی بین دو مرد", callback_data: "custom_image:scenario:selfie_two_men" }],
+    [{ text: "۲. مدل روی مجله", callback_data: "custom_image:scenario:magazine_model" }],
+    [{ text: "۳. سلفی روی تخت کنار یک مرد", callback_data: "custom_image:scenario:bed_selfie" }],
+    ...BACK_TO_MENU
+  ]));
+}
+
+async function selectCustomImageScenario(env, query, scenarioKey) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  if (state?.mode !== "custom_image_wait_scenario" || !state.sourcePhotoFileId || !CUSTOM_IMAGE_SCENARIOS[scenarioKey]) {
+    await sendMessage(env, chatId, "اطلاعات درخواست پیدا نشد. دوباره از منو شروع کن.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+  const profile = await ensurePointAccount(env, userId);
+  await setState(env, userId, { ...state, mode: "custom_image_wait_confirm", scenarioKey });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🖼 تایید نهایی درخواست",
+      "",
+      `سناریو: ${CUSTOM_IMAGE_SCENARIOS[scenarioKey]}`,
+      `هزینه: ${SERVICE_COSTS.custom_image} ⭐`,
+      `موجودی فعلی: ${profile?.pointsBalance || 0} ⭐`,
+      "",
+      "با ثبت قطعی، امتیاز از حسابت کم می‌شود."
+    ].join("\n"),
+    keyboard([
+      [{ text: `✅ ثبت قطعی | ${SERVICE_COSTS.custom_image} ⭐`, callback_data: "custom_image:confirm" }],
+      ...BACK_TO_MENU
+    ])
+  );
+}
+
+async function confirmCustomImageRequest(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  if (state?.mode !== "custom_image_wait_confirm" || !state.sourcePhotoFileId || !CUSTOM_IMAGE_SCENARIOS[state.scenarioKey]) {
+    await sendMessage(env, chatId, "اطلاعات درخواست کامل نیست. دوباره از منو شروع کن.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+
+  const requestId = shortId();
+  const charge = await spendPoints(
+    env,
+    userId,
+    SERVICE_COSTS.custom_image,
+    `spend:custom_image:${requestId}`,
+    "ساخت عکس با چهره دلخواه"
+  );
+  if (!charge.ok) {
+    await sendInsufficientPoints(env, chatId, userId, SERVICE_COSTS.custom_image);
+    return;
+  }
+
+  const request = {
+    id: requestId,
+    userId,
+    username: query.from.username || "",
+    firstName: query.from.first_name || "",
+    sourcePhotoFileId: state.sourcePhotoFileId,
+    scenarioKey: state.scenarioKey,
+    scenarioLabel: CUSTOM_IMAGE_SCENARIOS[state.scenarioKey],
+    pointsCost: SERVICE_COSTS.custom_image,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+  try {
+    await env.BOT_KV.put(`custom_image:${requestId}`, JSON.stringify(request));
+    await putListItem(env, "custom_image_requests", request);
+  } catch (error) {
+    await refundPoints(env, userId, SERVICE_COSTS.custom_image, `refund:custom_image:${requestId}`, "بازگشت امتیاز ثبت ناموفق");
+    throw error;
+  }
+  await clearState(env, userId);
+  await sendMessage(
+    env,
+    chatId,
+    `✅ درخواست ساخت عکس ثبت شد.\n\nکد: ${requestId}\nهزینه: ${SERVICE_COSTS.custom_image} ⭐\nموجودی: ${charge.balance} ⭐`,
+    keyboard(await getMainMenuForUser(env, userId))
+  );
+  await sendCustomImageRequestToAdmin(env, request);
+}
+
+async function sendCustomImageRequestToAdmin(env, request) {
+  await sendPhoto(
+    env,
+    env.ADMIN_CHAT_ID,
+    request.sourcePhotoFileId,
+    [
+      "🖼 درخواست ساخت عکس",
+      "",
+      `کد: ${request.id}`,
+      `کاربر: ${request.firstName || "-"} | ${request.username ? `@${request.username}` : request.userId}`,
+      `سناریو: ${request.scenarioLabel}`,
+      `هزینه پرداخت‌شده: ${request.pointsCost} ⭐`
+    ].join("\n"),
+    keyboard([[
+      { text: "📤 ارسال عکس نهایی", callback_data: `custom_image:reply:${request.id}` },
+      { text: "❌ رد و بازگشت امتیاز", callback_data: `custom_image:reject:${request.id}` }
+    ]])
+  );
+}
+
+async function listCustomImageRequests(env, chatId) {
+  const refs = await getList(env, "custom_image_requests");
+  const pending = refs.filter((item) => item.status === "pending").slice(-25).reverse();
+  if (!pending.length) {
+    await sendMessage(env, chatId, "درخواست ساخت عکسِ در انتظار وجود ندارد.", keyboard(ADMIN_MENU));
+    return;
+  }
+  const rows = pending.map((request) => [{
+    text: `🖼 ${request.firstName || request.username || request.id} | ${request.id}`,
+    callback_data: `custom_image:view:${request.id}`
+  }]);
+  rows.push([{ text: "↩️ پنل ادمین", callback_data: "admin:panel" }]);
+  await sendMessage(env, chatId, `🖼 درخواست‌های ساخت عکس\n\nتعداد در انتظار: ${pending.length}`, keyboard(rows));
+}
+
+async function startCustomImageReply(env, query, requestId) {
+  const chatId = String(query.message.chat.id);
+  const request = await getJson(env, `custom_image:${requestId}`);
+  if (!request || request.status !== "pending") {
+    await sendMessage(env, chatId, "این درخواست پیدا نشد یا قبلاً پاسخ داده شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+  await setState(env, String(query.from.id), { mode: "admin_custom_image_reply", requestId });
+  await sendPhoto(
+    env,
+    chatId,
+    request.sourcePhotoFileId,
+    `📤 عکس نهایی ساخته‌شده را بفرست.\n\nکد: ${request.id}\nسناریو: ${request.scenarioLabel}`,
+    keyboard([[{ text: "↩️ لغو", callback_data: "admin:list_custom_images" }]])
+  );
+}
+
+async function viewCustomImageRequest(env, query, requestId) {
+  const request = await getJson(env, `custom_image:${requestId}`);
+  if (!request || request.status !== "pending") {
+    await sendMessage(env, String(query.message.chat.id), "این درخواست پیدا نشد یا قبلاً تعیین تکلیف شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+  await sendCustomImageRequestToAdmin(env, request);
+}
+
+async function finishCustomImageReply(env, message, state) {
+  const chatId = String(message.chat.id);
+  const adminId = String(message.from.id);
+  if (!isAdmin(env, adminId)) return;
+  const request = await getJson(env, `custom_image:${state.requestId}`);
+  if (!request || request.status !== "pending") {
+    await clearState(env, adminId);
+    await sendMessage(env, chatId, "این درخواست دیگر در انتظار نیست.", keyboard(ADMIN_MENU));
+    return;
+  }
+  if (!message.photo?.length) {
+    await sendMessage(env, chatId, "❌ عکس نهایی را به‌صورت Photo بفرست.");
+    return;
+  }
+  const photo = message.photo[message.photo.length - 1];
+  await sendPhoto(env, request.userId, photo.file_id, `✅ عکس درخواستی شما آماده شد.\n\nکد: ${request.id}`);
+  request.status = "completed";
+  request.completedAt = new Date().toISOString();
+  request.completedBy = adminId;
+  request.sourcePhotoFileId = "";
+  await env.BOT_KV.put(`custom_image:${request.id}`, JSON.stringify(request));
+  await updateListItem(env, "custom_image_requests", request.id, (item) => ({ ...item, status: "completed", completedAt: request.completedAt, sourcePhotoFileId: "" }));
+  await clearState(env, adminId);
+  await sendMessage(env, chatId, `✅ عکس نهایی برای کاربر ارسال شد.\nکد: ${request.id}`, keyboard(ADMIN_MENU));
+}
+
+async function rejectCustomImageRequest(env, query, requestId) {
+  const chatId = String(query.message.chat.id);
+  const request = await getJson(env, `custom_image:${requestId}`);
+  if (!request || request.status !== "pending") {
+    await sendMessage(env, chatId, "این درخواست پیدا نشد یا قبلاً تعیین تکلیف شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+  const refund = await refundPoints(
+    env,
+    request.userId,
+    request.pointsCost,
+    `refund:custom_image:${request.id}`,
+    "بازگشت امتیاز درخواست ردشده ساخت عکس"
+  );
+  request.status = "rejected";
+  request.rejectedAt = new Date().toISOString();
+  request.rejectedBy = String(query.from.id);
+  request.sourcePhotoFileId = "";
+  await env.BOT_KV.put(`custom_image:${request.id}`, JSON.stringify(request));
+  await updateListItem(env, "custom_image_requests", request.id, (item) => ({ ...item, status: "rejected", rejectedAt: request.rejectedAt, sourcePhotoFileId: "" }));
+  await sendMessage(env, request.userId, `❌ درخواست ساخت عکس رد شد.\n\n⭐ ${request.pointsCost} امتیاز برگشت داده شد.\nموجودی: ${refund.balance} ⭐`);
+  await sendMessage(env, chatId, `✅ درخواست رد شد و ${request.pointsCost} ⭐ برگشت داده شد.`, keyboard(ADMIN_MENU));
 }
 
 async function startPostSubmission(env, chatId, userId) {
@@ -2737,6 +3111,12 @@ async function handleAdminCallback(env, query, data) {
   if (data === "admin:special_post_start") {
     await clearState(env, String(query.from.id));
     await startSpecialPost(env, query);
+    return;
+  }
+
+  if (data === "admin:list_custom_images") {
+    await clearState(env, String(query.from.id));
+    await listCustomImageRequests(env, chatId);
     return;
   }
 
@@ -3593,6 +3973,52 @@ async function cancelScheduledPost(env, query, postId) {
   await sendMessage(env, chatId, `✅ انتشار لغو شد.\nکد: ${postId}`, keyboard(ADMIN_MENU));
 }
 
+async function cancelPointServiceRequest(env, query, kind, requestId) {
+  const chatId = String(query.message.chat.id);
+  const isBooking = kind === "booking";
+  const key = isBooking ? `booking:${requestId}` : `release:${requestId}`;
+  const listName = isBooking ? "bookings" : "release_requests";
+  const request = await getJson(env, key);
+  if (!request || request.status !== "scheduled") {
+    await sendMessage(env, chatId, "این درخواست پیدا نشد یا قبلاً لغو شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  request.status = "canceled";
+  request.canceledAt = new Date().toISOString();
+  request.canceledBy = String(query.from.id);
+  let refund = null;
+  if (request.pointsCost) {
+    refund = await refundPoints(
+      env,
+      request.userId,
+      request.pointsCost,
+      `refund:${kind}:${requestId}`,
+      `بازگشت امتیاز لغو ${isBooking ? "مشاوره" : "تخلیه"}`
+    );
+    request.pointsRefundedAt = new Date().toISOString();
+  }
+  await env.BOT_KV.put(key, JSON.stringify(request));
+  await updateListItem(env, listName, requestId, (item) => ({ ...item, ...request }));
+
+  const slot = await getJson(env, `slot:${request.slotId}`);
+  if (slot?.status === "booked") {
+    slot.status = "open";
+    slot.bookedBy = "";
+    slot.bookingId = "";
+    slot.releaseRequestId = "";
+    await env.BOT_KV.put(`slot:${slot.id}`, JSON.stringify(slot));
+    await updateListItem(env, "slots", slot.id, (item) => ({ ...item, ...slot }));
+  }
+
+  await sendMessage(
+    env,
+    request.userId,
+    `❌ درخواست شما توسط ادمین لغو شد.${refund ? `\n\n⭐ ${request.pointsCost} امتیاز برگشت داده شد.\nموجودی: ${refund.balance} ⭐` : ""}`
+  );
+  await sendMessage(env, chatId, `✅ درخواست لغو شد${refund ? " و امتیاز برگشت داده شد" : ""}.`, keyboard(ADMIN_MENU));
+}
+
 async function listPendingProofs(env, chatId) {
   const proofs = (await getPendingProofs(env)).slice(-10).reverse();
   if (!proofs.length) {
@@ -4030,17 +4456,19 @@ async function exportComprehensive(env, chatId) {
   const profiles = await getProfiles(env);
   const bookings = await getList(env, "bookings");
   const releases = await getList(env, "release_requests");
+  const customImages = await getList(env, "custom_image_requests");
   const posts = await getList(env, "posts");
   const tests = await getList(env, "test_results");
   const proofs = await getProofs(env);
   const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "registered_at", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_instagram", "last_proof_partner_awareness", "last_proof_reject_reason"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "registered_at", "points_balance", "points_lifetime_earned", "points_lifetime_spent", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "custom_image_request_count", "custom_image_pending_count", "custom_image_completed_count", "custom_image_rejected_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_instagram", "last_proof_partner_awareness", "last_proof_reject_reason"],
     ...profiles.map((profile) => {
       const userTests = tests.filter((item) => item.userId === profile.userId);
       const lastTest = userTests[userTests.length - 1];
       const userPosts = posts.filter((item) => item.userId === profile.userId);
+      const userCustomImages = customImages.filter((item) => item.userId === profile.userId);
       const lastPost = userPosts[userPosts.length - 1];
       const userSupportTickets = supportTickets.filter((item) => item.userId === profile.userId);
       const lastSupportTicket = userSupportTickets[userSupportTickets.length - 1];
@@ -4060,6 +4488,9 @@ async function exportComprehensive(env, chatId) {
         profile.cuckoldPreverified ? "yes" : "no",
         profile.hotwifeVerified ? "yes" : "no",
         profile.createdAt,
+        Number(profile.pointsBalance || 0),
+        Number(profile.pointsLifetimeEarned || 0),
+        Number(profile.pointsLifetimeSpent || 0),
         userTests.length,
         lastTest?.total ?? "",
         lastTest?.min ?? "",
@@ -4070,6 +4501,10 @@ async function exportComprehensive(env, chatId) {
         lastTest?.createdAt ?? "",
         bookings.filter((item) => item.userId === profile.userId).length,
         releases.filter((item) => item.userId === profile.userId).length,
+        userCustomImages.length,
+        userCustomImages.filter((item) => item.status === "pending").length,
+        userCustomImages.filter((item) => item.status === "completed").length,
+        userCustomImages.filter((item) => item.status === "rejected").length,
         userPosts.length,
         userPosts.filter((item) => getPostScheduleKind(item.kind) === "media").length,
         userPosts.filter((item) => item.kind === "confession").length,
@@ -4341,6 +4776,149 @@ async function getProfile(env, userId) {
   return getJson(env, `profile:${userId}`);
 }
 
+async function ensurePointAccount(env, userId) {
+  const profile = await getProfile(env, userId);
+  if (!profile?.registered) return null;
+  if (profile.pointsVersion === POINTS_VERSION) return profile;
+
+  const verifiedCuckold = profile.gender === "male" && profile.type === "cuckold" && profile.cuckoldVerified;
+  let earned = 0;
+  const legacyPostIds = [];
+  const legacyProofIds = [];
+  if (verifiedCuckold) {
+    const postRefs = await getList(env, "posts");
+    const byPost = new Map();
+    for (const post of postRefs) if (post?.id) byPost.set(post.id, post);
+    const qualifyingStatuses = new Set(["approved_waiting_schedule", "scheduled", "published"]);
+    for (const post of byPost.values()) {
+      if (String(post.userId) !== String(userId) || !qualifyingStatuses.has(post.status)) continue;
+      earned += POINT_REWARDS[post.kind] || 0;
+      legacyPostIds.push(post.id);
+    }
+
+    const proofRefs = await getList(env, "proofs");
+    const approvedProof = proofRefs.find((proof) =>
+      String(proof.userId) === String(userId) && proof.status === "approved" && proof.proofType !== "hotwife"
+    );
+    if (approvedProof) {
+      earned += POINT_REWARDS.proof;
+      legacyProofIds.push(approvedProof.id);
+    }
+  }
+
+  const updated = {
+    ...profile,
+    pointsVersion: POINTS_VERSION,
+    pointsBalance: earned,
+    pointsLifetimeEarned: earned,
+    pointsLifetimeSpent: 0,
+    pointsLegacyPostIds: legacyPostIds,
+    pointsLegacyProofIds: legacyProofIds,
+    pointsInitializedAt: new Date().toISOString()
+  };
+  await env.BOT_KV.put(`profile:${userId}`, JSON.stringify(updated));
+  return updated;
+}
+
+async function migrateLegacyPointsBatch(env) {
+  const snapshots = await getProfileSnapshots(env);
+  if (!snapshots.length) return;
+  const cursor = Number(await env.BOT_KV.get("points_migration_cursor") || 0);
+  if (cursor >= snapshots.length) return;
+  const batch = snapshots.slice(cursor, cursor + 1);
+  for (const profile of batch) await ensurePointAccount(env, profile.userId);
+  await env.BOT_KV.put("points_migration_cursor", String(Math.min(cursor + batch.length, snapshots.length)));
+}
+
+async function changePoints(env, userId, amount, transactionId, reason) {
+  const existing = await getJson(env, `points_tx:${transactionId}`);
+  if (existing) {
+    const profile = await ensurePointAccount(env, userId);
+    return { ok: true, duplicate: true, balance: Number(profile?.pointsBalance || 0) };
+  }
+
+  const profile = await ensurePointAccount(env, userId);
+  if (!profile) return { ok: false, balance: 0 };
+  const balance = Number(profile.pointsBalance || 0);
+  if (amount < 0 && balance < Math.abs(amount)) return { ok: false, balance, needed: Math.abs(amount) };
+  const isRefund = String(transactionId).startsWith("refund:");
+
+  const updated = {
+    ...profile,
+    pointsBalance: balance + amount,
+    pointsLifetimeEarned: Number(profile.pointsLifetimeEarned || 0) + (isRefund ? 0 : Math.max(amount, 0)),
+    pointsLifetimeSpent: isRefund
+      ? Math.max(0, Number(profile.pointsLifetimeSpent || 0) - Math.max(amount, 0))
+      : Number(profile.pointsLifetimeSpent || 0) + Math.max(-amount, 0),
+    pointsUpdatedAt: new Date().toISOString()
+  };
+  const transaction = {
+    id: transactionId,
+    userId: String(userId),
+    amount,
+    reason,
+    balanceAfter: updated.pointsBalance,
+    createdAt: updated.pointsUpdatedAt
+  };
+  await env.BOT_KV.put(`profile:${userId}`, JSON.stringify(updated));
+  await env.BOT_KV.put(`points_tx:${transactionId}`, JSON.stringify(transaction));
+  return { ok: true, balance: updated.pointsBalance, transaction };
+}
+
+async function spendPoints(env, userId, cost, transactionId, reason) {
+  return changePoints(env, userId, -Math.abs(cost), transactionId, reason);
+}
+
+async function refundPoints(env, userId, cost, transactionId, reason) {
+  return changePoints(env, userId, Math.abs(cost), transactionId, reason);
+}
+
+async function awardPostPoints(env, post) {
+  const profile = await getProfile(env, post.userId);
+  const verified = profile?.gender === "male" && profile.type === "cuckold" && profile.cuckoldVerified;
+  const amount = POINT_REWARDS[post.kind] || 0;
+  if (!verified || !amount) return null;
+  if ((profile.pointsLegacyPostIds || []).includes(post.id)) {
+    return { ok: true, duplicate: true, balance: Number(profile.pointsBalance || 0) };
+  }
+  return changePoints(env, post.userId, amount, `earn:post:${post.id}`, `انتشار پست ${post.kind}`);
+}
+
+async function showPoints(env, chatId, userId) {
+  const profile = await ensurePointAccount(env, userId);
+  await sendMessage(
+    env,
+    chatId,
+    [
+      `⭐ امتیاز فعلی شما: ${Number(profile?.pointsBalance || 0)} ⭐`,
+      "",
+      "کسب امتیاز:",
+      "🖼 عکس تاییدشده: ۳ ⭐",
+      "🎬 فیلم تاییدشده: ۵ ⭐",
+      "✍️ اعتراف تاییدشده: ۱ ⭐",
+      "🧾 تکمیل اثبات کاکولدی: ۱ ⭐",
+      "",
+      "هزینه خدمات:",
+      "💧 تخلیه آب بیغیرتی: ۵ ⭐",
+      "🎭 فیلم با چهره دلخواه: ۱۵ ⭐",
+      "🟢 گیف با کپشن: ۱۰ ⭐",
+      "🖼 عکس با چهره دلخواه: ۵ ⭐",
+      "📅 مشاوره: ۱ ⭐"
+    ].join("\n"),
+    keyboard(await getMainMenuForUser(env, userId))
+  );
+}
+
+async function sendInsufficientPoints(env, chatId, userId, cost) {
+  const profile = await ensurePointAccount(env, userId);
+  await sendMessage(
+    env,
+    chatId,
+    `❌ امتیاز کافی نداری.\n\nموجودی: ${Number(profile?.pointsBalance || 0)} ⭐\nامتیاز لازم: ${cost} ⭐`,
+    keyboard([[{ text: "⭐ مشاهده امتیازها", callback_data: "points:show" }], ...BACK_TO_MENU])
+  );
+}
+
 async function getProfiles(env) {
   const refs = await getList(env, "profiles");
   const byUser = new Map();
@@ -4599,7 +5177,7 @@ function cleanText(value) {
 function formatProfilesTable(title, profiles) {
   const lines = [title, ""];
   for (const profile of profiles.slice(0, 30)) {
-    lines.push(`${profile.name || "-"} | ${profile.username || "-"} | ${profile.age || "-"} | ${profile.city || "-"} | ${profile.typeLabel || profile.type || "-"} | ${profile.cuckoldVerified ? "تایید" : "بدون تایید"}`);
+    lines.push(`${profile.name || "-"} | ${profile.username || "-"} | ${profile.age || "-"} | ${profile.city || "-"} | ${profile.typeLabel || profile.type || "-"} | ${profile.cuckoldVerified ? "تایید" : "بدون تایید"} | ${Number(profile.pointsBalance || 0)} ⭐`);
   }
   if (profiles.length > 30) lines.push(`... و ${profiles.length - 30} مورد دیگر`);
   return lines.join("\n");
@@ -4607,7 +5185,7 @@ function formatProfilesTable(title, profiles) {
 
 function profileRows(profiles) {
   return [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "registered_at"],
+    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "points_balance", "points_lifetime_earned", "points_lifetime_spent", "registered_at"],
     ...profiles.map((profile) => [
       profile.userId,
       profile.name,
@@ -4620,6 +5198,9 @@ function profileRows(profiles) {
       profile.cuckoldVerified ? "yes" : "no",
       profile.cuckoldPreverified ? "yes" : "no",
       profile.hotwifeVerified ? "yes" : "no",
+      Number(profile.pointsBalance || 0),
+      Number(profile.pointsLifetimeEarned || 0),
+      Number(profile.pointsLifetimeSpent || 0),
       profile.createdAt
     ])
   ];
@@ -5006,6 +5587,12 @@ async function publishDuePosts(env) {
     if (post.status !== "scheduled" || !post.scheduledAt) continue;
     if (Date.parse(post.scheduledAt) > now) continue;
 
+    const pointProfile = await getProfile(env, post.userId);
+    const eligibleForPoints = pointProfile?.gender === "male"
+      && pointProfile.type === "cuckold"
+      && pointProfile.cuckoldVerified;
+    const hadPointAccount = pointProfile?.pointsVersion === POINTS_VERSION;
+
     post.status = "publishing";
     post.publishingStartedAt = new Date().toISOString();
     await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
@@ -5024,8 +5611,37 @@ async function publishDuePosts(env) {
       post.publishedAt = new Date().toISOString();
       await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
       await updateListItem(env, "posts", post.id, (item) => ({ ...item, status: "published", publishedAt: post.publishedAt }));
-      await sendMessage(env, post.userId, `✅ پستت در کانال منتشر شد.\n\nکد: ${post.id}`);
-      await notifyAdmin(env, `✅ پست زمان‌بندی‌شده منتشر شد.\n\nکد: ${post.id}\nنوع: ${postTypeLabel(post.kind)}`);
+
+      let pointResult = null;
+      if (eligibleForPoints) {
+        try {
+          if (hadPointAccount) {
+            pointResult = await awardPostPoints(env, post);
+          } else {
+            const migratedProfile = await ensurePointAccount(env, post.userId);
+            pointResult = { ok: true, balance: Number(migratedProfile?.pointsBalance || 0) };
+          }
+        } catch (pointError) {
+          await safeNotifyAdmin(env, `⚠️ پست ${post.id} منتشر شد، اما ثبت امتیاز خطا داشت: ${String(pointError?.message || pointError)}`);
+        }
+      }
+
+      try {
+        await sendMessage(
+          env,
+          post.userId,
+          [
+            "✅ پستت در کانال منتشر شد.",
+            "",
+            `کد: ${post.id}`,
+            pointResult && !pointResult.duplicate ? `⭐ امتیاز این پست: ${POINT_REWARDS[post.kind] || 0}` : "",
+            pointResult ? `⭐ موجودی امتیاز: ${pointResult.balance}` : ""
+          ].filter(Boolean).join("\n")
+        );
+      } catch (notifyError) {
+        await safeNotifyAdmin(env, `⚠️ پست ${post.id} منتشر شد، اما اطلاع‌رسانی به کاربر ناموفق بود.`);
+      }
+      await safeNotifyAdmin(env, `✅ پست زمان‌بندی‌شده منتشر شد.\n\nکد: ${post.id}\nنوع: ${postTypeLabel(post.kind)}`);
     } catch (error) {
       post.status = "publish_failed";
       post.publishError = String(error?.message || error);
