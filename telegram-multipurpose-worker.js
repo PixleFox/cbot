@@ -14,10 +14,9 @@ const MAX_PHOTO_CAPTION_LENGTH = 900;
 const MAX_VIDEO_CAPTION_LENGTH = 900;
 const POST_COOLDOWN_SECONDS = 90;
 const BOOKING_COOLDOWN_SECONDS = 60;
-const TEST_COOLDOWN_SECONDS = 60;
 const INVALID_SUBMISSION_LIMIT = 3;
 const USER_BAN_SECONDS = 60 * 60 * 24 * 2;
-const TEST_FEATURE_ENABLED = false;
+const TEST_FEATURE_ENABLED = true;
 const REMINDER_WINDOW_MINUTES = 30;
 const DEFAULT_POST_HOUR = 17;
 const DEFAULT_POST_MINUTE = 48;
@@ -946,6 +945,16 @@ async function handleCallback(query, env) {
   if (data === "post:type:confession") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     await startConfessionPost(env, chatId, userId);
+    return;
+  }
+
+  if (data.startsWith("t2c:")) {
+    await cancelStatelessTest(query, env);
+    return;
+  }
+
+  if (data.startsWith("t2:")) {
+    await handleStatelessTestCallback(query, env);
     return;
   }
 
@@ -1923,14 +1932,12 @@ async function startTest(env, chatId, userId) {
     await sendDisabledTestMessage(env, chatId, userId);
     return;
   }
-  if (!(await checkCooldown(env, userId, "test", TEST_COOLDOWN_SECONDS))) {
-    await sendMessage(env, chatId, "⏳ چند لحظه صبر کن و دوباره آزمون را شروع کن.");
-    return;
-  }
 
   const profile = await getProfile(env, userId);
-  const questionIds = getTestQuestions(profile).map((question) => question.id);
-  await setState(env, userId, { mode: "test", index: 0, scores: [], answers: [], questionIds });
+  const mode = ["married", "relationship"].includes(profile?.marital) ? "r" : "g";
+  const sessionId = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  const issuedAt = Math.floor(Date.now() / 60000).toString(36);
+  const questionCount = getStatelessTestQuestions(mode).length;
   await sendMessage(
     env,
     chatId,
@@ -1938,13 +1945,13 @@ async function startTest(env, chatId, userId) {
       "🧪 تست غیرت",
       "",
       "این آزمون صرفاً برای خودشناسی است و ملاک قطعی یا تشخیص محسوب نمی‌شود.",
-      profile?.marital === "single" ? "برای شما فقط ۸ سوال عمومی نمایش داده می‌شود." : "برای شما ۸ سوال عمومی + ۱۰ سوال رابطه نمایش داده می‌شود.",
+      questionCount === 8 ? "برای شما ۸ سوال عمومی نمایش داده می‌شود." : "برای شما ۸ سوال عمومی + ۱۰ سوال رابطه نمایش داده می‌شود.",
       "",
-      "برای توقف: /cancel"
+      "برای توقف از دکمه «انصراف از آزمون» استفاده کن."
     ].join("\n"),
     keyboard(BACK_TO_MENU)
   );
-  await sendQuestion(env, chatId, { index: 0, questionIds });
+  await sendStatelessQuestion(env, chatId, userId, mode, sessionId, issuedAt, "");
 }
 
 async function sendDisabledTestMessage(env, chatId, userId) {
@@ -1959,6 +1966,202 @@ async function sendDisabledTestMessage(env, chatId, userId) {
     ].join("\n"),
     keyboard(await getMainMenuForUser(env, userId))
   );
+}
+
+let testSigningKeyToken = "";
+let testSigningKeyPromise = null;
+
+function getStatelessTestQuestions(mode) {
+  return QUESTIONS.filter((question) => question.section === "general" || (mode === "r" && question.section === "relationship"));
+}
+
+async function getTestSigningKey(env) {
+  if (!testSigningKeyPromise || testSigningKeyToken !== env.BOT_TOKEN) {
+    testSigningKeyToken = env.BOT_TOKEN;
+    testSigningKeyPromise = crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(env.BOT_TOKEN),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  }
+  return testSigningKeyPromise;
+}
+
+async function signTestProgress(env, userId, mode, sessionId, issuedAt, answers) {
+  const key = await getTestSigningKey(env);
+  const payload = `${userId}|${mode}|${sessionId}|${issuedAt}|${answers}`;
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return [...new Uint8Array(signature).slice(0, 6)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function buildTestCallbackData(env, userId, mode, sessionId, issuedAt, answers) {
+  const signature = await signTestProgress(env, userId, mode, sessionId, issuedAt, answers);
+  return `t2:${mode}:${sessionId}:${issuedAt}:${answers}:${signature}`;
+}
+
+async function sendStatelessQuestion(env, chatId, userId, mode, sessionId, issuedAt, answers, messageId = null) {
+  const questions = getStatelessTestQuestions(mode);
+  const index = answers.length;
+  const question = questions[index];
+  if (!question) return;
+
+  const callbackData = await Promise.all(question.options.map((_, optionIndex) =>
+    buildTestCallbackData(env, userId, mode, sessionId, issuedAt, `${answers}${optionIndex}`)
+  ));
+  const cancelData = (await buildTestCallbackData(env, userId, mode, sessionId, issuedAt, answers)).replace(/^t2:/, "t2c:");
+  const rows = question.options.map((option, optionIndex) => [{
+    text: `گزینه ${optionIndex + 1}`,
+    callback_data: callbackData[optionIndex]
+  }]);
+  const optionText = question.options.map((option, optionIndex) => `${optionIndex + 1}ـ ${option.label}`).join("\n\n");
+  const text = [`🔘 سوال ${index + 1}/${questions.length}`, "", question.text, "", optionText].join("\n");
+  const replyMarkup = keyboard([...rows, [{ text: "↩️ انصراف از آزمون", callback_data: cancelData }]]);
+
+  if (messageId) {
+    try {
+      await editMessageText(env, chatId, messageId, text, replyMarkup);
+      return;
+    } catch {
+      // If Telegram can no longer edit the original message, continue in a new one.
+    }
+  }
+  await sendMessage(env, chatId, text, replyMarkup);
+}
+
+async function cancelStatelessTest(query, env) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const [, mode, sessionId, issuedAt, answers = "", signature] = String(query.data || "").split(":");
+  const issuedMinute = Number.parseInt(issuedAt, 36);
+  const ageMinutes = Math.floor(Date.now() / 60000) - issuedMinute;
+  const validShape = ["g", "r"].includes(mode)
+    && /^[a-f0-9]{8}$/.test(sessionId || "")
+    && /^[0-3]{0,18}$/.test(answers)
+    && Number.isFinite(issuedMinute)
+    && ageMinutes >= -5
+    && ageMinutes <= 24 * 60;
+  const expectedSignature = validShape
+    ? await signTestProgress(env, userId, mode, sessionId, issuedAt, answers)
+    : "";
+  if (!validShape || signature !== expectedSignature) return;
+
+  const text = "↩️ آزمون لغو شد. هر زمان خواستی می‌توانی دوباره از منو شروع کنی.";
+  const replyMarkup = keyboard(await getMainMenuForUser(env, userId));
+  try {
+    await editMessageText(env, chatId, query.message.message_id, text, replyMarkup);
+  } catch {
+    await sendMessage(env, chatId, text, replyMarkup);
+  }
+}
+
+async function handleStatelessTestCallback(query, env) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const parts = String(query.data || "").split(":");
+  const [, mode, sessionId, issuedAt, answers, signature] = parts;
+  const questions = getStatelessTestQuestions(mode);
+  const issuedMinute = Number.parseInt(issuedAt, 36);
+  const ageMinutes = Math.floor(Date.now() / 60000) - issuedMinute;
+  const validShape = ["g", "r"].includes(mode)
+    && /^[a-f0-9]{8}$/.test(sessionId || "")
+    && /^[0-3]{1,18}$/.test(answers || "")
+    && answers.length <= questions.length
+    && Number.isFinite(issuedMinute)
+    && ageMinutes >= -5
+    && ageMinutes <= 24 * 60;
+  const expectedSignature = validShape
+    ? await signTestProgress(env, userId, mode, sessionId, issuedAt, answers)
+    : "";
+
+  if (!validShape || signature !== expectedSignature) {
+    await sendMessage(env, chatId, "این مرحله آزمون معتبر نیست یا بیشتر از ۲۴ ساعت از آن گذشته است. آزمون را دوباره از منو شروع کن.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+
+  if (answers.length >= questions.length) {
+    await finishStatelessTest(env, query, mode, sessionId, issuedAt, answers);
+    return;
+  }
+
+  await sendStatelessQuestion(env, chatId, userId, mode, sessionId, issuedAt, answers, query.message.message_id);
+}
+
+async function finishStatelessTest(env, query, mode, sessionId, issuedAt, encodedAnswers) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const questions = getStatelessTestQuestions(mode);
+  const answers = [...encodedAnswers].map((value, index) => {
+    const optionIndex = Number(value);
+    const question = questions[index];
+    return { questionId: question.id, optionIndex, score: question.options[optionIndex].score };
+  });
+  const total = answers.reduce((sum, answer) => sum + answer.score, 0);
+  const questionCount = questions.length;
+  const min = questionCount;
+  const max = questionCount * 4;
+  const percent = Math.round(((total - min) / (max - min)) * 100);
+  const result = getTestType(percent);
+  const id = (await sha256(`${userId}:${sessionId}:${issuedAt}`)).slice(0, 12);
+  const testResult = {
+    id,
+    userId,
+    questionCount,
+    total,
+    min,
+    max,
+    percent,
+    type: result.title,
+    answers,
+    createdAt: new Date().toISOString()
+  };
+
+  const profile = await getProfile(env, userId);
+  if (!profile?.registered) {
+    await sendMessage(env, chatId, "ثبت‌نام شما پیدا نشد. ابتدا ثبت‌نام را کامل کن.", keyboard(LOCKED_MENU));
+    return;
+  }
+  const history = Array.isArray(profile.testHistory) ? profile.testHistory : [];
+  const existing = history.find((item) => item.id === id);
+  const savedResult = existing || testResult;
+  if (!existing) {
+    const updatedProfile = {
+      ...profile,
+      testHistory: [...history, testResult].slice(-10),
+      testCount: Number(profile.testCount || 0) + 1,
+      lastTestResult: testResult
+    };
+    await env.BOT_KV.put(`profile:${userId}`, JSON.stringify(updatedProfile));
+  }
+
+  const savedType = getTestType(savedResult.percent);
+  const resultText = buildTestResultText(savedResult, savedType);
+  const replyMarkup = { parse_mode: "HTML", ...keyboard(await getMainMenuForUser(env, userId)) };
+  try {
+    await editMessageText(env, chatId, query.message.message_id, resultText, replyMarkup);
+  } catch {
+    await sendMessage(env, chatId, resultText, replyMarkup);
+  }
+}
+
+function buildTestResultText(testResult, result) {
+  return [
+    "🟢 <b><u>نتیجه تست غیرت</u></b>",
+    "━━━━━━━━━━━━",
+    "",
+    `🎭 <b>تیپ شخصیت:</b> <u>${escapeHtml(result.title)}</u>`,
+    `📊 <b>درصد طیف:</b> ${testResult.percent}%`,
+    `🧮 <b>نمره خام:</b> ${testResult.total}`,
+    `📍 <b>بازه نمره:</b> ${testResult.min} تا ${testResult.max}`,
+    "",
+    decorateTestText(result.summary),
+    "",
+    decorateTestText(result.advice),
+    "",
+    "━━━━━━━━━━━━",
+    "🌱 <i>این آزمون صرفاً برای خودشناسی است و ملاک قطعی محسوب نمی‌شود.</i>"
+  ].join("\n");
 }
 
 async function sendQuestion(env, chatId, state) {
@@ -3274,6 +3477,7 @@ async function handleAdminCallback(env, query, data) {
     const canceledPosts = posts.filter((post) => post.status === "canceled");
     const tests = await getList(env, "test_results");
     const profiles = await getProfiles(env);
+    const optimizedTestCount = profiles.reduce((sum, profile) => sum + Number(profile.testCount || 0), 0);
     const proofs = await getProofs(env);
     const supportTickets = await getSupportTickets(env);
     const openSupportTickets = supportTickets.filter((ticket) => ticket.status !== "answered");
@@ -3306,7 +3510,7 @@ async function handleAdminCallback(env, query, data) {
         `پست‌های ویژه فعال: ${activeSpecialPosts.length}`,
         `درخواست‌های پشتیبانی: ${supportTickets.length}`,
         `پشتیبانی پاسخ نداده: ${openSupportTickets.length}`,
-        `نتایج تست غیرت: ${tests.length}`
+        `نتایج تست غیرت: ${tests.length + optimizedTestCount}`
       ].join("\n"),
       keyboard(ADMIN_MENU)
     );
@@ -4465,7 +4669,11 @@ async function exportComprehensive(env, chatId) {
   const rows = [
     ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "registered_at", "points_balance", "points_lifetime_earned", "points_lifetime_spent", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "custom_image_request_count", "custom_image_pending_count", "custom_image_completed_count", "custom_image_rejected_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_instagram", "last_proof_partner_awareness", "last_proof_reject_reason"],
     ...profiles.map((profile) => {
-      const userTests = tests.filter((item) => item.userId === profile.userId);
+      const legacyUserTests = tests.filter((item) => item.userId === profile.userId);
+      const optimizedUserTests = Array.isArray(profile.testHistory) ? profile.testHistory : [];
+      const userTests = [...legacyUserTests, ...optimizedUserTests]
+        .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index)
+        .sort((a, b) => Date.parse(a.createdAt || 0) - Date.parse(b.createdAt || 0));
       const lastTest = userTests[userTests.length - 1];
       const userPosts = posts.filter((item) => item.userId === profile.userId);
       const userCustomImages = customImages.filter((item) => item.userId === profile.userId);
@@ -5709,6 +5917,16 @@ async function telegram(env, method, payload) {
 async function sendMessage(env, chatId, text, extra = {}) {
   return telegram(env, "sendMessage", {
     chat_id: chatId,
+    text,
+    disable_web_page_preview: true,
+    ...extra
+  });
+}
+
+async function editMessageText(env, chatId, messageId, text, extra = {}) {
+  return telegram(env, "editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
     text,
     disable_web_page_preview: true,
     ...extra
