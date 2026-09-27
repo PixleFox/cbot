@@ -493,7 +493,6 @@ export default {
     ctx.waitUntil(Promise.all([
       processBroadcastQueue(env),
       publishDueSpecialPosts(env),
-      migrateLegacyPointsBatch(env),
       sendDueBookingReminders(env),
       sendDueReleaseReminders(env),
       publishDuePosts(env)
@@ -4872,8 +4871,7 @@ async function getPosts(env) {
   const refs = await getList(env, "posts");
   const byId = new Map();
   for (const ref of refs) {
-    const latest = await getJson(env, `post:${ref.id}`);
-    if (latest) byId.set(latest.id, latest);
+    if (ref?.id) byId.set(ref.id, ref);
   }
   return [...byId.values()];
 }
@@ -5648,14 +5646,16 @@ async function sendDueBookingReminders(env) {
   const bookings = await getList(env, "bookings");
   const now = Date.now();
   const reminderMs = REMINDER_WINDOW_MINUTES * 60 * 1000;
+  const due = bookings
+    .filter((booking) => booking.status === "scheduled" && !booking.reminderSent && booking.startsAt)
+    .filter((booking) => {
+      const startsAtMs = Date.parse(booking.startsAt);
+      return startsAtMs > now && startsAtMs - now <= reminderMs;
+    })
+    .slice(0, 3);
+  if (!due.length) return;
 
-  for (const booking of bookings) {
-    if (booking.status !== "scheduled" || booking.reminderSent || !booking.startsAt) continue;
-
-    const startsAtMs = Date.parse(booking.startsAt);
-    const shouldRemind = startsAtMs > now && startsAtMs - now <= reminderMs;
-    if (!shouldRemind) continue;
-
+  for (const booking of due) {
     const reminderText = [
       "⏰ یادآوری نوبت مشاوره",
       "",
@@ -5691,14 +5691,16 @@ async function sendDueReleaseReminders(env) {
   const requests = await getList(env, "release_requests");
   const now = Date.now();
   const reminderMs = REMINDER_WINDOW_MINUTES * 60 * 1000;
+  const due = requests
+    .filter((request) => request.status === "scheduled" && !request.reminderSent && request.startsAt)
+    .filter((request) => {
+      const startsAtMs = Date.parse(request.startsAt);
+      return startsAtMs > now && startsAtMs - now <= reminderMs;
+    })
+    .slice(0, 3);
+  if (!due.length) return;
 
-  for (const request of requests) {
-    if (request.status !== "scheduled" || request.reminderSent || !request.startsAt) continue;
-
-    const startsAtMs = Date.parse(request.startsAt);
-    const shouldRemind = startsAtMs > now && startsAtMs - now <= reminderMs;
-    if (!shouldRemind) continue;
-
+  for (const request of due) {
     await sendMessage(
       env,
       request.userId,
@@ -5744,7 +5746,7 @@ async function publishDueSpecialPosts(env) {
   const due = posts
     .filter((post) => post.status === "scheduled" && Date.parse(post.scheduledAt) <= now)
     .filter((post) => !post.nextRetryAt || Date.parse(post.nextRetryAt) <= now)
-    .slice(0, 10);
+    .slice(0, 3);
   if (!due.length) return;
 
   for (const post of due) {
@@ -5787,13 +5789,16 @@ function nextSpecialPostDate(previousDate, recurrence, now) {
 }
 
 async function publishDuePosts(env) {
-  const posts = await getPosts(env);
+  const postRefs = await getPosts(env);
   const now = Date.now();
   const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
+  const due = postRefs
+    .filter((post) => post.status === "scheduled" && post.scheduledAt && Date.parse(post.scheduledAt) <= now)
+    .slice(0, 3);
 
-  for (const post of posts) {
-    if (post.status !== "scheduled" || !post.scheduledAt) continue;
-    if (Date.parse(post.scheduledAt) > now) continue;
+  for (const postRef of due) {
+    const post = (await getJson(env, `post:${postRef.id}`)) || postRef;
+    if (post.status !== "scheduled" || !post.scheduledAt || Date.parse(post.scheduledAt) > now) continue;
 
     const pointProfile = await getProfile(env, post.userId);
     const eligibleForPoints = pointProfile?.gender === "male"
@@ -5804,7 +5809,6 @@ async function publishDuePosts(env) {
     post.status = "publishing";
     post.publishingStartedAt = new Date().toISOString();
     await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
-    await updateListItem(env, "posts", post.id, (item) => ({ ...item, status: "publishing", publishingStartedAt: post.publishingStartedAt }));
 
     try {
       if (post.kind === "photo") {
