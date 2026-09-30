@@ -17,13 +17,14 @@ Set these Worker variables/secrets in Cloudflare:
 
 - `BOT_TOKEN`
 - `ADMIN_CHAT_ID`
-- `CHANNEL_ID` is set in `wrangler.toml` as `@cuckzclub`.
+- `CHANNEL_ID` is set as `@cuckzclub` for confessions and special posts.
+- `MEDIA_CHANNEL_ID` is set as `@cclubmedia` for approved user photo/video posts.
 
 Create and bind a KV namespace with this exact binding name:
 
 - `BOT_KV`
 
-The bot must be admin in the destination channel if it should publish approved posts.
+The bot must be admin in both destination channels if it should publish approved posts.
 
 Consultation slots should be added by the admin with:
 

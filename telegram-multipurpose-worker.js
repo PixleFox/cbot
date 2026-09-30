@@ -1,4 +1,5 @@
 const CHANNEL_USERNAME = "@cuckzclub";
+const MEDIA_CHANNEL_USERNAME = "@cclubmedia";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
 const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-v2.png";
@@ -4789,7 +4790,7 @@ async function sendProofMedia(env, chatId, kind, fileId, caption, extra = {}) {
 
 function buildMediaCaption(caption, kind = "photo") {
   const tag = kind === "video" ? "#فیلم_ارسالی" : "#عکس_ارسالی";
-  return ["C CLUB", "", tag, cleanText(caption), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`, "", "📩 ارسال محتوا در کانال:", "@cucksclubbot"].join("\n");
+  return ["C CLUB", "", tag, cleanText(caption), MEDIA_CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`, "", "📩 ارسال محتوا در کانال:", "@cucksclubbot"].join("\n");
 }
 
 function buildConfessionText(text) {
@@ -5791,7 +5792,6 @@ function nextSpecialPostDate(previousDate, recurrence, now) {
 async function publishDuePosts(env) {
   const postRefs = await getPosts(env);
   const now = Date.now();
-  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
   const due = postRefs
     .filter((post) => post.status === "scheduled" && post.scheduledAt && Date.parse(post.scheduledAt) <= now)
     .slice(0, 3);
@@ -5811,6 +5811,9 @@ async function publishDuePosts(env) {
     await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
 
     try {
+      const targetChannel = post.kind === "confession"
+        ? (env.CHANNEL_ID || CHANNEL_USERNAME)
+        : (env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME);
       if (post.kind === "photo") {
         await sendPhoto(env, targetChannel, post.fileId, post.finalText);
       } else if (post.kind === "video") {
