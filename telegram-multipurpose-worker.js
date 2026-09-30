@@ -5814,12 +5814,15 @@ async function publishDuePosts(env) {
       const targetChannel = post.kind === "confession"
         ? (env.CHANNEL_ID || CHANNEL_USERNAME)
         : (env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME);
+      const publishText = post.kind === "confession"
+        ? post.finalText
+        : String(post.finalText || "").replaceAll(CHANNEL_USERNAME, MEDIA_CHANNEL_USERNAME);
       if (post.kind === "photo") {
-        await sendPhoto(env, targetChannel, post.fileId, post.finalText);
+        await sendPhoto(env, targetChannel, post.fileId, publishText);
       } else if (post.kind === "video") {
-        await sendVideo(env, targetChannel, post.fileId, post.finalText);
+        await sendVideo(env, targetChannel, post.fileId, publishText);
       } else {
-        await sendMessage(env, targetChannel, post.finalText);
+        await sendMessage(env, targetChannel, publishText);
       }
 
       post.status = "published";
