@@ -1,3 +1,5 @@
+import { strToU8, zipSync } from "fflate";
+
 const CHANNEL_USERNAME = "@cuckzclub";
 const MEDIA_CHANNEL_USERNAME = "@cclubmedia";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
@@ -3121,7 +3123,17 @@ async function savePostAndPreview(env, message, post) {
   await putListItem(env, "posts", record);
   await clearState(env, userId);
 
-  await sendMessage(env, chatId, "✅ پست برای ادمین ارسال شد. نتیجه بعد از بررسی اعلام می‌شود.", keyboard(await getMainMenuForUser(env, userId)));
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "✅ پست برای ادمین ارسال شد. نتیجه بعد از بررسی اعلام می‌شود.",
+      "",
+      `⭐ امتیاز پس از تایید و انتشار: +${POINT_REWARDS[record.kind] || 0}`,
+      "این امتیاز برای کاکولدهای تأییدشده ثبت می‌شود."
+    ].join("\n"),
+    keyboard(await getMainMenuForUser(env, userId))
+  );
   await sendAdminPostPreview(env, record, message.from);
 }
 
@@ -4357,7 +4369,7 @@ async function exportBookings(env, chatId) {
   }
 
   const rows = [
-    ["id", "status", "slot", "name", "contact", "topic", "telegram_id", "username", "created_at"],
+    ["کد نوبت", "وضعیت", "زمان نوبت", "نام", "راه تماس", "موضوع", "شناسه تلگرام", "یوزرنیم", "تاریخ ثبت"],
     ...bookings.map((item) => [
       item.id,
       item.status,
@@ -4370,7 +4382,7 @@ async function exportBookings(env, chatId) {
       item.createdAt
     ])
   ];
-  await sendCsv(env, chatId, `bookings-${today()}.csv`, rows, "📊 فایل خروجی درخواست‌های مشاوره؛ در Excel باز می‌شود.");
+  await sendExcel(env, chatId, `bookings-${today()}.xlsx`, "نوبت‌ها", rows, "📊 فایل مرتب نوبت‌های مشاوره");
 }
 
 async function listVerifiedCuckolds(env, chatId) {
@@ -4648,12 +4660,12 @@ async function processBroadcastQueue(env) {
 
 async function exportProfiles(env, chatId) {
   const profiles = await getProfiles(env);
-  await sendCsv(env, chatId, `profiles-${today()}.csv`, profileRows(profiles), "📥 Excel ثبت‌نامی‌ها");
+  await sendExcel(env, chatId, `profiles-${today()}.xlsx`, "ثبت‌نامی‌ها", profileRows(profiles), "📥 فایل مرتب ثبت‌نامی‌ها");
 }
 
 async function exportVerifiedCuckolds(env, chatId) {
   const profiles = (await getProfiles(env)).filter((profile) => profile.cuckoldVerified);
-  await sendCsv(env, chatId, `verified-cuckolds-${today()}.csv`, profileRows(profiles), "📥 Excel کاکولدهای تایید شده");
+  await sendExcel(env, chatId, `verified-cuckolds-${today()}.xlsx`, "کاکولدهای تاییدشده", profileRows(profiles), "📥 فایل مرتب کاکولدهای تاییدشده");
 }
 
 async function exportComprehensive(env, chatId) {
@@ -4667,7 +4679,7 @@ async function exportComprehensive(env, chatId) {
   const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "registered_at", "points_balance", "points_lifetime_earned", "points_lifetime_spent", "test_count", "last_test_raw_score", "last_test_min", "last_test_max", "last_test_percent", "last_test_type", "last_test_question_count", "last_test_at", "booking_count", "release_count", "custom_image_request_count", "custom_image_pending_count", "custom_image_completed_count", "custom_image_rejected_count", "post_count", "media_post_count", "confession_post_count", "scheduled_post_count", "published_post_count", "rejected_post_count", "last_post_status", "last_post_kind", "last_post_scheduled_at", "last_post_published_at", "last_post_reject_reason", "support_ticket_count", "open_support_ticket_count", "last_support_status", "last_support_at", "proof_statuses", "last_proof_instagram", "last_proof_partner_awareness", "last_proof_reject_reason"],
+    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "تاریخ ثبت‌نام", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تعداد آزمون", "آخرین نمره خام", "حداقل نمره", "حداکثر نمره", "درصد آزمون", "تیپ آزمون", "تعداد سوال", "زمان آخرین آزمون", "تعداد نوبت", "تعداد درخواست تخلیه", "درخواست ساخت عکس", "ساخت عکس در انتظار", "ساخت عکس تکمیل‌شده", "ساخت عکس ردشده", "تعداد کل پست", "تعداد عکس و فیلم", "تعداد اعتراف", "پست زمان‌بندی‌شده", "پست منتشرشده", "پست ردشده", "وضعیت آخرین پست", "نوع آخرین پست", "زمان‌بندی آخرین پست", "انتشار آخرین پست", "دلیل رد آخرین پست", "تعداد تیکت پشتیبانی", "تیکت باز", "وضعیت آخرین تیکت", "زمان آخرین تیکت", "وضعیت اثبات‌ها", "اینستاگرام اثبات", "اطلاع پارتنر", "دلیل رد اثبات"],
     ...profiles.map((profile) => {
       const legacyUserTests = tests.filter((item) => item.userId === profile.userId);
       const optimizedUserTests = Array.isArray(profile.testHistory) ? profile.testHistory : [];
@@ -4736,7 +4748,7 @@ async function exportComprehensive(env, chatId) {
     })
   ];
 
-  await sendCsv(env, chatId, `comprehensive-users-${today()}.csv`, rows, "📈 Excel جامع کاربران");
+  await sendExcel(env, chatId, `comprehensive-users-${today()}.xlsx`, "گزارش جامع", rows, "📈 فایل جامع و مرتب کاربران");
 }
 
 function normalizeMediaFile(message) {
@@ -5080,8 +5092,8 @@ async function refundPoints(env, userId, cost, transactionId, reason) {
   return changePoints(env, userId, Math.abs(cost), transactionId, reason);
 }
 
-async function awardPostPoints(env, post) {
-  const profile = await getProfile(env, post.userId);
+async function awardPostPoints(env, post, currentProfile = null) {
+  const profile = currentProfile || await getProfile(env, post.userId);
   const verified = profile?.gender === "male" && profile.type === "cuckold" && profile.cuckoldVerified;
   const amount = POINT_REWARDS[post.kind] || 0;
   if (!verified || !amount) return null;
@@ -5392,7 +5404,7 @@ function formatProfilesTable(title, profiles) {
 
 function profileRows(profiles) {
   return [
-    ["user_id", "name", "username", "age", "gender", "marital", "city", "type", "cuckold_verified", "cuckold_preverified", "hotwife_verified", "points_balance", "points_lifetime_earned", "points_lifetime_spent", "registered_at"],
+    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تاریخ ثبت‌نام"],
     ...profiles.map((profile) => [
       profile.userId,
       profile.name,
@@ -5792,6 +5804,7 @@ function nextSpecialPostDate(previousDate, recurrence, now) {
 async function publishDuePosts(env) {
   const postRefs = await getPosts(env);
   const now = Date.now();
+  await retryPendingMediaForwards(env, postRefs, now);
   const due = postRefs
     .filter((post) => post.status === "scheduled" && post.scheduledAt && Date.parse(post.scheduledAt) <= now)
     .slice(0, 3);
@@ -5810,40 +5823,75 @@ async function publishDuePosts(env) {
     post.publishingStartedAt = new Date().toISOString();
     await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
 
+    const targetChannel = post.kind === "confession"
+      ? (env.CHANNEL_ID || CHANNEL_USERNAME)
+      : (env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME);
     try {
-      const targetChannel = post.kind === "confession"
-        ? (env.CHANNEL_ID || CHANNEL_USERNAME)
-        : (env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME);
       const publishText = post.kind === "confession"
         ? post.finalText
         : String(post.finalText || "").replaceAll(CHANNEL_USERNAME, MEDIA_CHANNEL_USERNAME);
+      let publishedMessage;
       if (post.kind === "photo") {
-        await sendPhoto(env, targetChannel, post.fileId, publishText);
+        publishedMessage = await sendPhoto(env, targetChannel, post.fileId, publishText);
       } else if (post.kind === "video") {
-        await sendVideo(env, targetChannel, post.fileId, publishText);
+        publishedMessage = await sendVideo(env, targetChannel, post.fileId, publishText);
       } else {
-        await sendMessage(env, targetChannel, publishText);
+        publishedMessage = await sendMessage(env, targetChannel, publishText);
+      }
+
+      if (getPostScheduleKind(post.kind) === "media") {
+        post.mediaMessageId = publishedMessage?.result?.message_id || null;
+        post.forwardStatus = "pending";
+        try {
+          await forwardMediaPost(env, post);
+          post.forwardStatus = "forwarded";
+          post.forwardedAt = new Date().toISOString();
+          post.forwardError = "";
+          post.nextForwardRetryAt = "";
+        } catch (forwardError) {
+          post.forwardStatus = "failed";
+          post.forwardError = String(forwardError?.message || forwardError);
+          post.nextForwardRetryAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+          await safeNotifyAdmin(env, `⚠️ پست ${post.id} در @cclubmedia منتشر شد، اما فوروارد به @cuckzclub ناموفق بود و دوباره تلاش می‌شود.\n${post.forwardError}`);
+        }
       }
 
       post.status = "published";
       post.publishedAt = new Date().toISOString();
       await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
-      await updateListItem(env, "posts", post.id, (item) => ({ ...item, status: "published", publishedAt: post.publishedAt }));
+      await updateListItem(env, "posts", post.id, (item) => ({
+        ...item,
+        status: "published",
+        publishedAt: post.publishedAt,
+        mediaMessageId: post.mediaMessageId || null,
+        forwardStatus: post.forwardStatus || "",
+        forwardedAt: post.forwardedAt || "",
+        forwardError: post.forwardError || "",
+        nextForwardRetryAt: post.nextForwardRetryAt || ""
+      }));
 
       let pointResult = null;
       if (eligibleForPoints) {
         try {
           if (hadPointAccount) {
-            pointResult = await awardPostPoints(env, post);
+            pointResult = await awardPostPoints(env, post, pointProfile);
           } else {
             const migratedProfile = await ensurePointAccount(env, post.userId);
-            pointResult = { ok: true, balance: Number(migratedProfile?.pointsBalance || 0) };
+            pointResult = { ok: true, migrated: true, balance: Number(migratedProfile?.pointsBalance || 0) };
           }
         } catch (pointError) {
           await safeNotifyAdmin(env, `⚠️ پست ${post.id} منتشر شد، اما ثبت امتیاز خطا داشت: ${String(pointError?.message || pointError)}`);
         }
       }
 
+      const reward = POINT_REWARDS[post.kind] || 0;
+      const pointLines = pointResult?.duplicate
+        ? ["⭐ امتیاز این محتوا قبلاً ثبت شده بود.", `⭐ موجودی فعلی: ${pointResult.balance}`]
+        : pointResult
+          ? [`🎁 امتیاز دریافتی از این محتوا: +${reward} ⭐`, `⭐ موجودی جدید: ${pointResult.balance}`]
+          : eligibleForPoints
+            ? ["⚠️ پست منتشر شد، اما ثبت امتیاز با خطا روبه‌رو شد؛ ادمین مطلع شد."]
+            : ["ℹ️ برای این محتوا امتیازی ثبت نشد؛ امتیاز محتوا مخصوص کاکولدهای تأییدشده است."];
       try {
         await sendMessage(
           env,
@@ -5852,8 +5900,8 @@ async function publishDuePosts(env) {
             "✅ پستت در کانال منتشر شد.",
             "",
             `کد: ${post.id}`,
-            pointResult && !pointResult.duplicate ? `⭐ امتیاز این پست: ${POINT_REWARDS[post.kind] || 0}` : "",
-            pointResult ? `⭐ موجودی امتیاز: ${pointResult.balance}` : ""
+            "",
+            ...pointLines
           ].filter(Boolean).join("\n")
         );
       } catch (notifyError) {
@@ -5882,17 +5930,132 @@ async function publishDuePosts(env) {
   }
 }
 
+async function forwardMediaPost(env, post) {
+  if (!post.mediaMessageId) throw new Error("شناسه پیام منتشرشده پیدا نشد.");
+  return forwardMessage(
+    env,
+    env.CHANNEL_ID || CHANNEL_USERNAME,
+    env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME,
+    post.mediaMessageId
+  );
+}
+
+async function retryPendingMediaForwards(env, postRefs, now = Date.now()) {
+  const pending = postRefs
+    .filter((post) => post.status === "published"
+      && getPostScheduleKind(post.kind) === "media"
+      && post.mediaMessageId
+      && post.forwardStatus !== "forwarded"
+      && (!post.nextForwardRetryAt || Date.parse(post.nextForwardRetryAt) <= now))
+    .slice(0, 2);
+
+  for (const postRef of pending) {
+    const post = (await getJson(env, `post:${postRef.id}`)) || postRef;
+    try {
+      await forwardMediaPost(env, post);
+      post.forwardStatus = "forwarded";
+      post.forwardedAt = new Date().toISOString();
+      post.forwardError = "";
+      post.nextForwardRetryAt = "";
+    } catch (error) {
+      post.forwardStatus = "failed";
+      post.forwardError = String(error?.message || error);
+      post.nextForwardRetryAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    }
+    await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
+    await updateListItem(env, "posts", post.id, (item) => ({
+      ...item,
+      forwardStatus: post.forwardStatus,
+      forwardedAt: post.forwardedAt || "",
+      forwardError: post.forwardError || "",
+      nextForwardRetryAt: post.nextForwardRetryAt || ""
+    }));
+  }
+}
+
 function shortId() {
   return crypto.randomUUID().split("-")[0];
 }
 
-function csvCell(value) {
-  return `"${String(value || "").replace(/"/g, '""')}"`;
+async function sendExcel(env, chatId, filename, sheetName, rows, caption) {
+  const workbook = createExcelWorkbook(sheetName, rows);
+  await sendDocument(
+    env,
+    chatId,
+    workbook,
+    filename,
+    caption,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
 }
 
-async function sendCsv(env, chatId, filename, rows, caption) {
-  const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\n");
-  await sendDocument(env, chatId, csv, filename, caption);
+export function createExcelWorkbook(sheetName, rows) {
+  const safeSheetName = String(sheetName || "گزارش").replace(/[\\/*?:[\]]/g, " ").slice(0, 31) || "گزارش";
+  const columnCount = Math.max(1, ...rows.map((row) => row.length));
+  const rowCount = Math.max(1, rows.length);
+  const widths = Array.from({ length: columnCount }, (_, columnIndex) => {
+    const longest = rows.reduce((max, row) => Math.max(max, String(row[columnIndex] ?? "").length), 0);
+    return Math.min(42, Math.max(12, longest + 3));
+  });
+  const columnsXml = widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("");
+  const rowsXml = rows.map((row, rowIndex) => {
+    const cells = Array.from({ length: columnCount }, (_, columnIndex) => excelCell(row[columnIndex], rowIndex, columnIndex));
+    return `<row r="${rowIndex + 1}" ht="${rowIndex === 0 ? 28 : 22}" customHeight="1">${cells.join("")}</row>`;
+  }).join("");
+  const lastCell = `${excelColumnName(columnCount)}${rowCount}`;
+  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0" rightToLeft="1" showGridLines="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <sheetFormatPr defaultRowHeight="22"/>
+  <cols>${columnsXml}</cols>
+  <sheetData>${rowsXml}</sheetData>
+  <autoFilter ref="A1:${lastCell}"/>
+</worksheet>`;
+  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <bookViews><workbookView/></bookViews>
+  <sheets><sheet name="${escapeXml(safeSheetName)}" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Arial"/></font></fonts>
+  <fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF167A45"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEAF7EF"/><bgColor indexed="64"/></patternFill></fill></fills>
+  <borders count="2"><border/><border><left style="thin"><color rgb="FFD9E2DD"/></left><right style="thin"><color rgb="FFD9E2DD"/></right><top style="thin"><color rgb="FFD9E2DD"/></top><bottom style="thin"><color rgb="FFD9E2DD"/></bottom></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyAlignment="1"><alignment horizontal="right" vertical="center" wrapText="1"/></xf></cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+  const files = {
+    "[Content_Types].xml": strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`),
+    "_rels/.rels": strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+    "xl/workbook.xml": strToU8(workbook),
+    "xl/_rels/workbook.xml.rels": strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`),
+    "xl/styles.xml": strToU8(styles),
+    "xl/worksheets/sheet1.xml": strToU8(worksheet)
+  };
+  return zipSync(files, { level: 0 });
+}
+
+function excelCell(value, rowIndex, columnIndex) {
+  const reference = `${excelColumnName(columnIndex + 1)}${rowIndex + 1}`;
+  const style = rowIndex === 0 ? 1 : rowIndex % 2 === 0 ? 3 : 2;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return `<c r="${reference}" s="${style}"><v>${value}</v></c>`;
+  }
+  const text = String(value ?? "");
+  return `<c r="${reference}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
+}
+
+function excelColumnName(index) {
+  let name = "";
+  for (let value = index; value > 0; value = Math.floor((value - 1) / 26)) {
+    name = String.fromCharCode(65 + ((value - 1) % 26)) + name;
+  }
+  return name;
+}
+
+function escapeXml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[char]);
 }
 
 async function sha256(text) {
@@ -5930,6 +6093,14 @@ async function sendMessage(env, chatId, text, extra = {}) {
     text,
     disable_web_page_preview: true,
     ...extra
+  });
+}
+
+async function forwardMessage(env, chatId, fromChatId, messageId) {
+  return telegram(env, "forwardMessage", {
+    chat_id: chatId,
+    from_chat_id: fromChatId,
+    message_id: messageId
   });
 }
 
@@ -5983,11 +6154,11 @@ async function answerCallback(env, callbackQueryId) {
   return telegram(env, "answerCallbackQuery", { callback_query_id: callbackQueryId });
 }
 
-async function sendDocument(env, chatId, content, filename, caption) {
+async function sendDocument(env, chatId, content, filename, caption, mimeType = "application/octet-stream") {
   const form = new FormData();
   form.append("chat_id", String(chatId));
   form.append("caption", caption);
-  form.append("document", new Blob([content], { type: "text/csv;charset=utf-8" }), filename);
+  form.append("document", new Blob([content], { type: mimeType }), filename);
 
   const response = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendDocument`, {
     method: "POST",
