@@ -444,8 +444,9 @@ const ADMIN_MENU = [
   ],
   [
     { text: "🗓 زمان‌های فعال", callback_data: "admin:list_slots" },
-    { text: "📌 پست‌های انتشار", callback_data: "admin:list_scheduled_posts" }
+    { text: "⏳ زمان‌های پیشنهادی", callback_data: "admin:list_time_proposals" }
   ],
+  [{ text: "📌 پست‌های انتشار", callback_data: "admin:list_scheduled_posts" }],
   [{ text: "🟡 پست‌های در انتظار بررسی", callback_data: "admin:list_pending_posts" }],
   [
     { text: "🧾 بررسی اثبات", callback_data: "admin:list_proofs" },
@@ -706,6 +707,11 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "booking_topic") {
     await handleBookingTopic(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "service_proposed_time") {
+    await handleServiceProposedTime(env, message, state, text);
     return;
   }
 
@@ -979,6 +985,25 @@ async function handleCallback(query, env) {
     } else {
       await finishBookingWithSlot(env, query, state, data.replace("slot:pick:", ""));
     }
+    return;
+  }
+
+  if (data.startsWith("slot:propose:")) {
+    await startServiceTimeProposal(env, query, data.replace("slot:propose:", ""));
+    return;
+  }
+
+  if (data.startsWith("proposal:approve:")) {
+    if (!isAdmin(env, userId)) return;
+    const [, , kind, requestId] = data.split(":");
+    await approveServiceTimeProposal(env, query, kind, requestId);
+    return;
+  }
+
+  if (data.startsWith("proposal:reject:")) {
+    if (!isAdmin(env, userId)) return;
+    const [, , kind, requestId] = data.split(":");
+    await rejectServiceTimeProposal(env, query, kind, requestId);
     return;
   }
 
@@ -2275,12 +2300,6 @@ async function startBooking(env, chatId, userId) {
     return;
   }
 
-  const slots = await getOpenSlots(env, 12, "consultation");
-  if (!slots.length) {
-    await sendMessage(env, chatId, "📅 فعلاً زمان آزادی برای مشاوره ثبت نشده. بعداً دوباره چک کن.", keyboard(await getMainMenuForUser(env, userId)));
-    return;
-  }
-
   await setState(env, userId, { mode: "booking_name" });
   await sendMessage(env, chatId, "📅 نوبت مشاوره\n\nنام یا اسم مستعار را بفرست.\n\nمثال: Ali\nلغو: /cancel", keyboard(BACK_TO_MENU));
 }
@@ -2326,16 +2345,15 @@ async function handleBookingTopic(env, message, state, text) {
   }
 
   const slots = await getOpenSlots(env, 12, "consultation");
-  if (!slots.length) {
-    await clearState(env, userId);
-    await sendMessage(env, chatId, "متأسفانه همین الان زمان آزادی باقی نمانده.", keyboard(await getMainMenuForUser(env, userId)));
-    return;
-  }
-
   await setState(env, userId, { ...state, mode: "booking_slot", topic: cleanText(text) });
-  await sendMessage(env, chatId, "🗓 یکی از زمان‌های آزاد را انتخاب کن:", keyboard([...slots.slice(0, 12).map((slot) => [
-    { text: slot.label, callback_data: `slot:pick:${slot.id}` }
-  ]), ...BACK_TO_MENU]));
+  const rows = slots.slice(0, 12).map((slot) => [{ text: slot.label, callback_data: `slot:pick:${slot.id}` }]);
+  rows.push([{ text: "✍️ پیشنهاد زمان دلخواه", callback_data: "slot:propose:booking" }]);
+  await sendMessage(
+    env,
+    chatId,
+    slots.length ? "🗓 یکی از زمان‌های آزاد را انتخاب کن یا زمان دلخواهت را پیشنهاد بده:" : "🗓 فعلاً زمان آماده‌ای وجود ندارد؛ زمان دلخواهت را به ادمین پیشنهاد بده:",
+    keyboard([...rows, ...BACK_TO_MENU])
+  );
 }
 
 async function finishBookingWithSlot(env, query, state, slotId) {
@@ -2368,6 +2386,8 @@ async function finishBookingWithSlot(env, query, state, slotId) {
   const booking = {
     id: bookingId,
     userId,
+    notificationChatId: chatId,
+    directMessagesTopicId: query.message.direct_messages_topic?.topic_id || null,
     username: query.from.username || "",
     firstName: query.from.first_name || "",
     name: state.name,
@@ -2562,21 +2582,22 @@ async function handleReleaseVoice(env, message, state) {
     return;
   }
 
-  const slots = await getOpenSlots(env, 12, "release");
-  if (!slots.length) {
-    await clearState(env, userId);
-    await sendMessage(env, chatId, "فعلاً زمان آزادی برای این درخواست ثبت نشده.", keyboard(await getMainMenuForUser(env, userId)));
-    return;
-  }
-
   await setState(env, userId, {
     mode: "release_slot",
     voiceFileId: voice.file_id,
-    voiceDuration: voice.duration
+    voiceDuration: voice.duration,
+    notificationChatId: chatId,
+    directMessagesTopicId: message.direct_messages_topic?.topic_id || null
   });
-  await sendMessage(env, chatId, "🗓 زمان آزاد را انتخاب کن:", keyboard([...slots.slice(0, 12).map((slot) => [
-    { text: slot.label, callback_data: `slot:pick:${slot.id}` }
-  ]), ...BACK_TO_MENU]));
+  const slots = await getOpenSlots(env, 12, "release");
+  const rows = slots.slice(0, 12).map((slot) => [{ text: slot.label, callback_data: `slot:pick:${slot.id}` }]);
+  rows.push([{ text: "✍️ پیشنهاد زمان دلخواه", callback_data: "slot:propose:release" }]);
+  await sendMessage(
+    env,
+    chatId,
+    slots.length ? "🗓 زمان آزاد را انتخاب کن یا زمان دلخواهت را پیشنهاد بده:" : "🗓 فعلاً زمان آماده‌ای وجود ندارد؛ زمان دلخواهت را به ادمین پیشنهاد بده:",
+    keyboard([...rows, ...BACK_TO_MENU])
+  );
 }
 
 async function finishReleaseWithSlot(env, query, state, slotId) {
@@ -2609,6 +2630,8 @@ async function finishReleaseWithSlot(env, query, state, slotId) {
   const request = {
     id: requestId,
     userId,
+    notificationChatId: state.notificationChatId || chatId,
+    directMessagesTopicId: state.directMessagesTopicId || query.message.direct_messages_topic?.topic_id || null,
     username: query.from.username || "",
     firstName: query.from.first_name || "",
     voiceFileId: state.voiceFileId,
@@ -2659,6 +2682,212 @@ async function finishReleaseWithSlot(env, query, state, slotId) {
     keyboard([[{ text: "❌ لغو و بازگشت امتیاز", callback_data: `service:cancel:release:${requestId}` }]])
   );
   await sendVoice(env, env.ADMIN_CHAT_ID, state.voiceFileId, `🎙 وویس تخلیه - کد ${requestId}`);
+}
+
+async function startServiceTimeProposal(env, query, kind) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  const valid = kind === "booking" ? state?.mode === "booking_slot" : state?.mode === "release_slot";
+  if (!valid) {
+    await sendMessage(env, chatId, "این درخواست منقضی شده؛ دوباره از منو شروع کن.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+
+  await setState(env, userId, {
+    ...state,
+    mode: "service_proposed_time",
+    serviceKind: kind,
+    notificationChatId: chatId,
+    directMessagesTopicId: query.message.direct_messages_topic?.topic_id || state.directMessagesTopicId || null,
+    username: query.from.username || "",
+    firstName: query.from.first_name || ""
+  });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "✍️ زمان پیشنهادی خودت را بفرست.",
+      "",
+      "نمونه‌های قابل قبول:",
+      "چهارشنبه ۱۸",
+      "چهارشنبه ۱۸:۳۰",
+      "فردا ۲۰:۰۰",
+      "",
+      "زمان بعد از تأیید ادمین قطعی می‌شود و تا آن موقع امتیازی کم نخواهد شد."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
+}
+
+async function handleServiceProposedTime(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const startsAt = parseTehranDateTime(text);
+  if (!startsAt) {
+    await sendMessage(env, chatId, "❌ زمان معتبر و مربوط به آینده بفرست.\n\nمثال: چهارشنبه ۱۸:۰۰", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  const isBooking = state.serviceKind === "booking";
+  const requestId = shortId();
+  const request = {
+    id: requestId,
+    userId,
+    username: state.username || message.from.username || "",
+    firstName: state.firstName || message.from.first_name || "",
+    notificationChatId: state.notificationChatId || chatId,
+    directMessagesTopicId: state.directMessagesTopicId || message.direct_messages_topic?.topic_id || null,
+    slotId: "",
+    slotLabel: cleanText(text),
+    startsAt,
+    proposedByUser: true,
+    status: "pending_admin",
+    pointsCost: isBooking ? SERVICE_COSTS.consultation : SERVICE_COSTS.release,
+    reminderSent: false,
+    createdAt: new Date().toISOString(),
+    ...(isBooking
+      ? { type: "consultation", name: state.name, contact: state.contact, topic: state.topic }
+      : { type: "release", voiceFileId: state.voiceFileId, voiceDuration: state.voiceDuration })
+  };
+  const keyPrefix = isBooking ? "booking" : "release";
+  const listName = isBooking ? "bookings" : "release_requests";
+  await env.BOT_KV.put(`${keyPrefix}:${requestId}`, JSON.stringify(request));
+  await putListItem(env, listName, request);
+  await clearState(env, userId);
+
+  await sendMessage(
+    env,
+    chatId,
+    [`✅ زمان پیشنهادی برای ادمین ارسال شد.`, "", `زمان: ${request.slotLabel}`, `کد: ${requestId}`, "پس از تأیید یا رد بهت خبر می‌دهیم."].join("\n"),
+    keyboard(await getMainMenuForUser(env, userId))
+  );
+  await sendMessage(
+    env,
+    env.ADMIN_CHAT_ID,
+    [
+      isBooking ? "📅 پیشنهاد زمان مشاوره" : "💧 پیشنهاد زمان تخلیه آب بیغیرتی",
+      "",
+      `کد: ${requestId}`,
+      `زمان پیشنهادی: ${request.slotLabel}`,
+      `تاریخ دقیق: ${formatDateTime(request.startsAt)}`,
+      `کاربر: ${formatUser(message.from)}`,
+      ...(isBooking ? [`نام: ${request.name}`, `تماس: ${request.contact}`, `موضوع: ${request.topic}`] : []),
+      `هزینه پس از تأیید: ${request.pointsCost} ⭐`
+    ].join("\n"),
+    keyboard([[
+      { text: "✅ تأیید زمان", callback_data: `proposal:approve:${state.serviceKind}:${requestId}` },
+      { text: "❌ رد زمان", callback_data: `proposal:reject:${state.serviceKind}:${requestId}` }
+    ]])
+  );
+  if (!isBooking) await sendVoice(env, env.ADMIN_CHAT_ID, request.voiceFileId, `🎙 وویس درخواست - کد ${requestId}`);
+}
+
+async function approveServiceTimeProposal(env, query, kind, requestId) {
+  const chatId = String(query.message.chat.id);
+  const isBooking = kind === "booking";
+  const keyPrefix = isBooking ? "booking" : "release";
+  const listName = isBooking ? "bookings" : "release_requests";
+  const purpose = isBooking ? "consultation" : "release";
+  const request = await getJson(env, `${keyPrefix}:${requestId}`);
+  if (!request || request.status !== "pending_admin") {
+    await sendMessage(env, chatId, "این پیشنهاد پیدا نشد یا قبلاً تعیین تکلیف شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+  if (!request.startsAt || Date.parse(request.startsAt) <= Date.now()) {
+    request.status = "expired";
+    request.rejectedAt = new Date().toISOString();
+    await env.BOT_KV.put(`${keyPrefix}:${requestId}`, JSON.stringify(request));
+    await updateListItem(env, listName, requestId, (item) => ({ ...item, ...request }));
+    await notifyServiceUser(env, request, "❌ زمان پیشنهادی گذشته است؛ لطفاً یک زمان جدید پیشنهاد بده.");
+    await sendMessage(env, chatId, "❌ زمان پیشنهادی گذشته و درخواست بسته شد.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const sameServiceRequests = await getList(env, listName);
+  const conflict = sameServiceRequests.some((item) => item.id !== requestId && item.status === "scheduled" && item.startsAt === request.startsAt);
+  if (conflict) {
+    await sendMessage(env, chatId, "❌ این زمان قبلاً رزرو شده است؛ پیشنهاد را رد کن تا کاربر زمان دیگری بفرستد.");
+    return;
+  }
+
+  const cost = isBooking ? SERVICE_COSTS.consultation : SERVICE_COSTS.release;
+  const transactionId = `spend:${purpose}:${requestId}`;
+  const charge = await spendPoints(env, request.userId, cost, transactionId, isBooking ? "رزرو مشاوره پیشنهادی" : "رزرو تخلیه پیشنهادی");
+  if (!charge.ok) {
+    await notifyServiceUser(env, request, `❌ زمان پیشنهادی تأیید نشد چون حداقل ${cost} امتیاز لازم داری.\nموجودی فعلی: ${charge.balance || 0} ⭐`);
+    await sendMessage(env, chatId, `❌ موجودی کاربر کافی نیست. موجودی: ${charge.balance || 0} ⭐`, keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const slot = {
+    id: shortId(),
+    label: request.slotLabel,
+    startsAt: request.startsAt,
+    purpose,
+    status: "booked",
+    bookedBy: request.userId,
+    ...(isBooking ? { bookingId: requestId } : { releaseRequestId: requestId }),
+    createdAt: new Date().toISOString(),
+    createdFromProposal: true
+  };
+  request.status = "scheduled";
+  request.slotId = slot.id;
+  request.pointsCost = cost;
+  request.pointsTransactionId = transactionId;
+  request.approvedAt = new Date().toISOString();
+  request.approvedBy = String(query.from.id);
+  try {
+    await env.BOT_KV.put(`slot:${slot.id}`, JSON.stringify(slot));
+    await putListItem(env, "slots", slot);
+    await env.BOT_KV.put(`${keyPrefix}:${requestId}`, JSON.stringify(request));
+    await updateListItem(env, listName, requestId, (item) => ({ ...item, ...request }));
+  } catch (error) {
+    await refundPoints(env, request.userId, cost, `refund:${purpose}:${requestId}`, "بازگشت امتیاز خطای ثبت زمان پیشنهادی");
+    throw error;
+  }
+
+  await notifyServiceUser(
+    env,
+    request,
+    [`✅ زمان پیشنهادی شما تأیید و رزرو شد.`, "", `زمان: ${request.slotLabel}`, `کد: ${requestId}`, `هزینه: ${cost} ⭐`, `موجودی جدید: ${charge.balance} ⭐`, "⏰ نیم ساعت قبل یادآوری دریافت می‌کنی."].join("\n")
+  );
+  await sendMessage(
+    env,
+    chatId,
+    `✅ زمان تأیید و رزرو قطعی شد.\nکد: ${requestId}`,
+    keyboard([[{ text: "❌ لغو و بازگشت امتیاز", callback_data: `service:cancel:${kind}:${requestId}` }], ...ADMIN_MENU])
+  );
+}
+
+async function rejectServiceTimeProposal(env, query, kind, requestId) {
+  const chatId = String(query.message.chat.id);
+  const isBooking = kind === "booking";
+  const keyPrefix = isBooking ? "booking" : "release";
+  const listName = isBooking ? "bookings" : "release_requests";
+  const request = await getJson(env, `${keyPrefix}:${requestId}`);
+  if (!request || request.status !== "pending_admin") {
+    await sendMessage(env, chatId, "این پیشنهاد پیدا نشد یا قبلاً تعیین تکلیف شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+  request.status = "rejected";
+  request.rejectedAt = new Date().toISOString();
+  request.rejectedBy = String(query.from.id);
+  await env.BOT_KV.put(`${keyPrefix}:${requestId}`, JSON.stringify(request));
+  await updateListItem(env, listName, requestId, (item) => ({ ...item, ...request }));
+  await notifyServiceUser(env, request, `❌ زمان پیشنهادی «${request.slotLabel}» تأیید نشد.\n\nمی‌توانی از منو زمان دیگری پیشنهاد بدهی.`);
+  await sendMessage(env, chatId, `✅ پیشنهاد رد شد.\nکد: ${requestId}`, keyboard(ADMIN_MENU));
+}
+
+async function notifyServiceUser(env, request, text) {
+  const primaryChatId = request.notificationChatId || request.userId;
+  const topicId = Number(request.directMessagesTopicId || 0);
+  try {
+    return await sendMessage(env, primaryChatId, text, topicId ? { direct_messages_topic_id: topicId } : {});
+  } catch (error) {
+    if (String(primaryChatId) === String(request.userId)) throw error;
+    return sendMessage(env, request.userId, text);
+  }
 }
 
 async function startCustomImageRequest(env, chatId, userId) {
@@ -3371,6 +3600,11 @@ async function handleAdminCallback(env, query, data) {
     await sendMessage(env, chatId, "🗓 زمان‌های فعال:", keyboard(slots.map((slot) => [
       { text: `❌ بستن ${slot.label}`, callback_data: `slot:close:${slot.id}` }
     ])));
+    return;
+  }
+
+  if (data === "admin:list_time_proposals") {
+    await listPendingServiceTimeProposals(env, chatId);
     return;
   }
 
@@ -4361,6 +4595,35 @@ async function viewProof(env, query, proofId) {
     username: proof.username,
     first_name: proof.firstName
   });
+}
+
+async function listPendingServiceTimeProposals(env, chatId) {
+  const bookings = (await getList(env, "bookings"))
+    .filter((item) => item.status === "pending_admin" && item.proposedByUser)
+    .map((item) => ({ ...item, proposalKind: "booking" }));
+  const releases = (await getList(env, "release_requests"))
+    .filter((item) => item.status === "pending_admin" && item.proposedByUser)
+    .map((item) => ({ ...item, proposalKind: "release" }));
+  const proposals = [...bookings, ...releases]
+    .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
+    .slice(0, 20);
+  if (!proposals.length) {
+    await sendMessage(env, chatId, "✅ پیشنهاد زمانِ در انتظار نداریم.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const lines = ["⏳ زمان‌های پیشنهادی در انتظار", ""];
+  const rows = [];
+  for (const proposal of proposals) {
+    const label = proposal.proposalKind === "booking" ? "مشاوره" : "تخلیه";
+    lines.push(`${label} | ${proposal.slotLabel} | ${proposal.firstName || proposal.username || proposal.userId} | کد ${proposal.id}`);
+    rows.push([
+      { text: `✅ ${label} ${proposal.slotLabel}`, callback_data: `proposal:approve:${proposal.proposalKind}:${proposal.id}` },
+      { text: "❌ رد", callback_data: `proposal:reject:${proposal.proposalKind}:${proposal.id}` }
+    ]);
+  }
+  rows.push(...ADMIN_MENU);
+  await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
 }
 
 async function exportBookings(env, chatId) {
@@ -5561,12 +5824,12 @@ function parseTehranDateTime(value) {
     return makeTehranIso(Number(absolute[1]), Number(absolute[2]), Number(absolute[3]), Number(absolute[4]), Number(absolute[5]));
   }
 
-  const relative = text.match(/^(امروز|فردا|شنبه|یکشنبه|يكشنبه|دوشنبه|سه شنبه|سه‌شنبه|چهارشنبه|پنجشنبه|جمعه)\s+(\d{1,2}):(\d{2})$/);
+  const relative = text.match(/^(امروز|فردا|شنبه|یکشنبه|يكشنبه|دوشنبه|سه شنبه|سه‌شنبه|چهارشنبه|پنجشنبه|جمعه)\s+(\d{1,2})(?::(\d{2}))?$/);
   if (!relative) return "";
 
   const dayWord = relative[1].replace("يك", "یک");
   const hour = Number(relative[2]);
-  const minute = Number(relative[3]);
+  const minute = Number(relative[3] || 0);
   if (hour > 23 || minute > 59) return "";
 
   const nowTehran = getTehranParts(new Date());
@@ -5680,7 +5943,7 @@ async function sendDueBookingReminders(env) {
       "مشاوره تا حدود ۳۰ دقیقه دیگر شروع می‌شود."
     ].join("\n");
 
-    await sendMessage(env, booking.userId, reminderText);
+    await notifyServiceUser(env, booking, reminderText);
     await notifyAdmin(
       env,
       [
@@ -5716,11 +5979,7 @@ async function sendDueReleaseReminders(env) {
   if (!due.length) return;
 
   for (const request of due) {
-    await sendMessage(
-      env,
-      request.userId,
-      ["⏰ یادآوری تخلیه آب بیغیرتی", "", `زمان: ${request.slotLabel}`, `کد: ${request.id}`].join("\n")
-    );
+    await notifyServiceUser(env, request, ["⏰ یادآوری تخلیه آب بیغیرتی", "", `زمان: ${request.slotLabel}`, `کد: ${request.id}`].join("\n"));
     await notifyAdmin(
       env,
       ["⏰ یادآوری درخواست تخلیه برای ادمین", "", `زمان: ${request.slotLabel}`, `کد: ${request.id}`, `کاربر: @${request.username || "-"}`].join("\n")
