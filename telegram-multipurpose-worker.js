@@ -3107,6 +3107,8 @@ async function savePostAndPreview(env, message, post) {
   const record = {
     id: postId,
     userId,
+    notificationChatId: chatId,
+    directMessagesTopicId: message.direct_messages_topic?.topic_id || null,
     username: message.from.username || "",
     firstName: message.from.first_name || "",
     kind: post.kind,
@@ -5893,9 +5895,9 @@ async function publishDuePosts(env) {
             ? ["⚠️ پست منتشر شد، اما ثبت امتیاز با خطا روبه‌رو شد؛ ادمین مطلع شد."]
             : ["ℹ️ برای این محتوا امتیازی ثبت نشد؛ امتیاز محتوا مخصوص کاکولدهای تأییدشده است."];
       try {
-        await sendMessage(
+        await notifyPostOwner(
           env,
-          post.userId,
+          post,
           [
             "✅ پستت در کانال منتشر شد.",
             "",
@@ -5905,7 +5907,13 @@ async function publishDuePosts(env) {
           ].filter(Boolean).join("\n")
         );
       } catch (notifyError) {
-        await safeNotifyAdmin(env, `⚠️ پست ${post.id} منتشر شد، اما اطلاع‌رسانی به کاربر ناموفق بود.`);
+        post.userNotifyError = String(notifyError?.message || notifyError);
+        post.userNotifyErrorAt = new Date().toISOString();
+        await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
+        await safeNotifyAdmin(
+          env,
+          `⚠️ پست ${post.id} منتشر شد، اما اطلاع‌رسانی به کاربر ناموفق بود.\n\nدلیل تلگرام: ${post.userNotifyError}`
+        );
       }
       await safeNotifyAdmin(env, `✅ پست زمان‌بندی‌شده منتشر شد.\n\nکد: ${post.id}\nنوع: ${postTypeLabel(post.kind)}`);
     } catch (error) {
@@ -5927,6 +5935,18 @@ async function publishDuePosts(env) {
         ].join("\n")
       );
     }
+  }
+}
+
+async function notifyPostOwner(env, post, text) {
+  const primaryChatId = post.notificationChatId || post.userId;
+  const topicId = Number(post.directMessagesTopicId || 0);
+  const topicOptions = topicId ? { direct_messages_topic_id: topicId } : {};
+  try {
+    return await sendMessage(env, primaryChatId, text, topicOptions);
+  } catch (error) {
+    if (String(primaryChatId) === String(post.userId)) throw error;
+    return sendMessage(env, post.userId, text);
   }
 }
 
