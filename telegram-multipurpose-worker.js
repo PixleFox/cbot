@@ -675,6 +675,16 @@ async function handleMessage(message, env) {
     return;
   }
 
+  if (state?.mode?.startsWith("bull_proof_") && state.mode !== "bull_proof_video_note") {
+    await handleBullProofTextStep(env, message, state, text);
+    return;
+  }
+
+  if (state?.mode === "bull_proof_video_note") {
+    await handleBullProofVideoNote(env, message, state);
+    return;
+  }
+
   if (state?.mode === "proof_instagram") {
     await handleProofInstagram(env, message, state, text);
     return;
@@ -1348,6 +1358,7 @@ async function finishRegistration(env, query, type) {
     cuckoldVerifiedAt: preverifiedCuckold ? new Date().toISOString() : "",
     cuckoldPreverified: preverifiedCuckold,
     hotwifeVerified: false,
+    bullVerified: false,
     pointsVersion: POINTS_VERSION,
     pointsBalance: 0,
     pointsLifetimeEarned: 0,
@@ -1383,7 +1394,47 @@ async function startProof(env, chatId, userId) {
     await startHotwifeProof(env, chatId, userId);
     return;
   }
+  if (profile?.registered && profile.gender === "male" && profile.type === "bull") {
+    await startBullProof(env, chatId, userId);
+    return;
+  }
   await startCuckoldProof(env, chatId, userId);
+}
+
+async function startBullProof(env, chatId, userId) {
+  const profile = await getProfile(env, userId);
+  if (!profile?.registered || profile.gender !== "male" || profile.type !== "bull") {
+    await sendMessage(env, chatId, "این بخش فقط برای کاربران بول فعال است.", keyboard(BACK_TO_MENU));
+    return;
+  }
+  if (profile.bullVerified) {
+    await sendMessage(env, chatId, "✅ شما قبلاً به عنوان بول تأیید شده‌اید.", keyboard(await getMainMenuForUser(env, userId)));
+    return;
+  }
+  const pendingProof = await getPendingProofForUser(env, userId);
+  if (pendingProof) {
+    await sendMessage(
+      env,
+      chatId,
+      [`⏳ درخواست اثبات بول شما در انتظار بررسی است.`, "", `کد درخواست: ${pendingProof.id}`, "تا اعلام نتیجه امکان ثبت درخواست جدید وجود ندارد."].join("\n"),
+      keyboard(await getMainMenuForUser(env, userId))
+    );
+    return;
+  }
+
+  await setState(env, userId, { mode: "bull_proof_full_name" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🧾 اثبات به عنوان بول",
+      "",
+      "اطلاعات را دقیق و واقعی وارد کن. پس از تکمیل، درخواست برای ادمین ارسال می‌شود.",
+      "",
+      "👤 نام و نام خانوادگی کاملت را بفرست."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
 }
 
 async function startCuckoldProof(env, chatId, userId) {
@@ -1793,10 +1844,130 @@ async function handleProofPartnerNoHijab(env, message, state) {
   );
 }
 
+async function handleBullProofTextStep(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!message.text) {
+    if (await recordInvalidSubmission(env, message, "در مرحله اطلاعات اثبات بول، پیام غیرمتنی فرستاده شد.", "متن")) return;
+    await sendMessage(env, chatId, "❌ در این مرحله فقط متن بفرست.", keyboard(BACK_TO_MENU));
+    return;
+  }
+  const value = cleanText(text);
+
+  if (state.mode === "bull_proof_full_name") {
+    const nameError = validateName(value);
+    if (nameError || value.split(/\s+/).length < 2) {
+      await sendMessage(env, chatId, `❌ ${nameError || "نام و نام خانوادگی را کامل وارد کن."}`, keyboard(BACK_TO_MENU));
+      return;
+    }
+    await setState(env, userId, { ...state, mode: "bull_proof_residence", bullFullName: value });
+    await sendMessage(env, chatId, "📍 محل سکونتت را بنویس.\n\nمثال: تهران، سعادت‌آباد", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  if (state.mode === "bull_proof_residence") {
+    if (value.length < 2 || value.length > 80 || countUrls(value)) {
+      await sendMessage(env, chatId, "❌ محل سکونت را کوتاه و معتبر بنویس.", keyboard(BACK_TO_MENU));
+      return;
+    }
+    await setState(env, userId, { ...state, mode: "bull_proof_job", bullResidence: value });
+    await sendMessage(env, chatId, "💼 شغلت را بنویس.\n\nمثال: مهندس، فروشنده، دانشجو", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  if (state.mode === "bull_proof_job") {
+    if (value.length < 2 || value.length > 80 || countUrls(value)) {
+      await sendMessage(env, chatId, "❌ عنوان شغلی را کوتاه و معتبر بنویس.", keyboard(BACK_TO_MENU));
+      return;
+    }
+    await setState(env, userId, { ...state, mode: "bull_proof_height", bullJob: value });
+    await sendMessage(env, chatId, "📏 قدت را به سانتی‌متر بفرست.\n\nمثال: ۱۸۵", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  if (state.mode === "bull_proof_height") {
+    const height = Number(normalizeDigits(value).replace(/\D/g, ""));
+    if (!Number.isInteger(height) || height < 130 || height > 230) {
+      await sendMessage(env, chatId, "❌ قد معتبر بین ۱۳۰ تا ۲۳۰ سانتی‌متر وارد کن.", keyboard(BACK_TO_MENU));
+      return;
+    }
+    await setState(env, userId, { ...state, mode: "bull_proof_weight", bullHeightCm: height });
+    await sendMessage(env, chatId, "⚖️ وزنت را به کیلوگرم بفرست.\n\nمثال: ۸۵", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  if (state.mode === "bull_proof_weight") {
+    const weight = Number(normalizeDigits(value).replace(/\D/g, ""));
+    if (!Number.isInteger(weight) || weight < 35 || weight > 250) {
+      await sendMessage(env, chatId, "❌ وزن معتبر بین ۳۵ تا ۲۵۰ کیلوگرم وارد کن.", keyboard(BACK_TO_MENU));
+      return;
+    }
+    await setState(env, userId, { ...state, mode: "bull_proof_video_note", bullWeightKg: weight });
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "🎥 مرحله آخر: پیام ویدیویی",
+        "",
+        "فقط یک Video Message دایره‌ای تلگرام بفرست؛ ویدیوی معمولی پذیرفته نمی‌شود.",
+        "مدت ویدیو باید حداقل ۱۰ ثانیه و حداکثر ۶۰ ثانیه باشد.",
+        "",
+        `در ویدیو واضح بگو: «سلام سی کلاب، من ${state.bullFullName} هستم.»`,
+        "",
+        "✨ ویدیو را تا جای ممکن جذاب، مرتب، با نور مناسب و چهره واضح بگیر تا معرفی بهتری برای کاکولدها داشته باشی."
+      ].join("\n"),
+      keyboard(BACK_TO_MENU)
+    );
+  }
+}
+
+async function handleBullProofVideoNote(env, message, state) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const videoNote = message.video_note;
+  if (!videoNote?.file_id) {
+    if (await recordInvalidSubmission(env, message, "به جای Video Message اثبات بول، نوع دیگری از پیام فرستاده شد.", "Video Message دایره‌ای تلگرام")) return;
+    await sendMessage(env, chatId, "❌ فقط Video Message دایره‌ای تلگرام پذیرفته می‌شود؛ ویدیوی معمولی یا فایل ویدیویی نفرست.", keyboard(BACK_TO_MENU));
+    return;
+  }
+  if (videoNote.duration < 10 || videoNote.duration > 60) {
+    await sendMessage(env, chatId, "❌ پیام ویدیویی باید حداقل ۱۰ و حداکثر ۶۰ ثانیه باشد. دوباره ضبط کن.", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  const profile = await getProfile(env, userId);
+  const proofId = shortId();
+  const proof = {
+    id: proofId,
+    proofType: "bull",
+    userId,
+    notificationChatId: chatId,
+    directMessagesTopicId: message.direct_messages_topic?.topic_id || null,
+    username: message.from.username || "",
+    firstName: message.from.first_name || "",
+    bullFullName: state.bullFullName,
+    bullResidence: state.bullResidence,
+    bullJob: state.bullJob,
+    bullHeightCm: state.bullHeightCm,
+    bullWeightKg: state.bullWeightKg,
+    bullVideoNoteFileId: videoNote.file_id,
+    bullVideoNoteDuration: videoNote.duration,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+  await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
+  await putListItem(env, "proofs", proof);
+  await clearState(env, userId);
+
+  await sendMessage(env, chatId, `✅ درخواست اثبات بول ثبت شد و برای ادمین رفت.\n\nکد: ${proofId}\nنتیجه بررسی همین‌جا اعلام می‌شود.`, keyboard(await getMainMenuForUser(env, userId)));
+  await sendProofToAdmin(env, proof, profile, message.from);
+}
+
 async function sendProofToAdmin(env, proof, profile, user) {
   const isHotwife = proof.proofType === "hotwife";
+  const isBull = proof.proofType === "bull";
   const controls = keyboard([[
-    { text: isHotwife ? "✅ تایید هاتوایف" : "✅ تایید کاکولد", callback_data: `proof:approve:${proof.id}` },
+    { text: isHotwife ? "✅ تایید هاتوایف" : isBull ? "✅ تایید بول" : "✅ تایید کاکولد", callback_data: `proof:approve:${proof.id}` },
     { text: "❌ رد", callback_data: `proof:reject:${proof.id}` }
   ]]);
 
@@ -1804,18 +1975,28 @@ async function sendProofToAdmin(env, proof, profile, user) {
     env,
     env.ADMIN_CHAT_ID,
     [
-      isHotwife ? "🧾 درخواست اثبات هاتوایفی" : "🧾 درخواست اثبات کاکولدی",
+      isHotwife ? "🧾 درخواست اثبات هاتوایفی" : isBull ? "🧾 درخواست اثبات بول" : "🧾 درخواست اثبات کاکولدی",
       "",
       `کد: ${proof.id}`,
       `کاربر: ${formatUser(user)}`,
       `نام ثبت‌نام: ${profile?.name || "-"}`,
       `سن: ${profile?.age || "-"}`,
       `شهر: ${profile?.city || "-"}`,
-      isHotwife ? "نوع اثبات: وویس هاتوایفی" : `گزینه‌ها: ${proof.relationships.map(proofRelationshipLabel).join("، ")}`,
-      isHotwife ? "" : `اینستاگرام: ${proof.instagram || "-"}`,
-      isHotwife ? "" : `اطلاع پارتنر: ${partnerAwarenessLabel(proof.partnerAwareness)}`
+      isHotwife ? "نوع اثبات: وویس هاتوایفی" : isBull ? "نوع اثبات: اطلاعات فردی و Video Message" : `گزینه‌ها: ${(proof.relationships || []).map(proofRelationshipLabel).join("، ")}`,
+      isBull ? `نام و نام خانوادگی: ${proof.bullFullName || "-"}` : "",
+      isBull ? `محل سکونت: ${proof.bullResidence || "-"}` : "",
+      isBull ? `شغل: ${proof.bullJob || "-"}` : "",
+      isBull ? `قد: ${proof.bullHeightCm || "-"} سانتی‌متر` : "",
+      isBull ? `وزن: ${proof.bullWeightKg || "-"} کیلوگرم` : "",
+      isBull ? `مدت ویدیو: ${proof.bullVideoNoteDuration || "-"} ثانیه` : "",
+      isHotwife || isBull ? "" : `اینستاگرام: ${proof.instagram || "-"}`,
+      isHotwife || isBull ? "" : `اطلاع پارتنر: ${partnerAwarenessLabel(proof.partnerAwareness)}`
     ].join("\n")
   );
+  if (isBull) {
+    await sendVideoNote(env, env.ADMIN_CHAT_ID, proof.bullVideoNoteFileId, controls);
+    return;
+  }
   await sendVoice(env, env.ADMIN_CHAT_ID, proof.voiceFileId, `🎙 وویس اثبات - کد ${proof.id}`, isHotwife ? controls : {});
   if (isHotwife) return;
 
@@ -1847,14 +2028,28 @@ async function approveProof(env, query, proofId) {
   proof.proofMedia1FileId = "";
   proof.proofMedia2FileId = "";
   proof.proofMedia3FileId = "";
+  proof.bullVideoNoteFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
-  await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "approved", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy }));
+  await updateListItem(env, "proofs", proofId, (item) => ({
+    ...item,
+    status: "approved",
+    reviewedAt: proof.reviewedAt,
+    reviewedBy: proof.reviewedBy,
+    voiceFileId: "",
+    proofMedia1FileId: "",
+    proofMedia2FileId: "",
+    proofMedia3FileId: "",
+    bullVideoNoteFileId: ""
+  }));
 
   const profile = await getProfile(env, proof.userId);
   if (profile) {
     if (proof.proofType === "hotwife") {
       profile.hotwifeVerified = true;
       profile.hotwifeVerifiedAt = proof.reviewedAt;
+    } else if (proof.proofType === "bull") {
+      profile.bullVerified = true;
+      profile.bullVerifiedAt = proof.reviewedAt;
     } else {
       profile.cuckoldVerified = true;
       profile.cuckoldVerifiedAt = proof.reviewedAt;
@@ -1863,7 +2058,7 @@ async function approveProof(env, query, proofId) {
   }
 
   let pointResult = null;
-  if (proof.proofType !== "hotwife") {
+  if (proof.proofType === "cuckold") {
     pointResult = hadPointAccount
       ? await changePoints(env, proof.userId, POINT_REWARDS.proof, `earn:proof:${proof.id}`, "تکمیل اثبات کاکولدی")
       : { ok: true, balance: Number((await ensurePointAccount(env, proof.userId))?.pointsBalance || 0) };
@@ -1871,7 +2066,9 @@ async function approveProof(env, query, proofId) {
 
   const approvedText = proof.proofType === "hotwife"
     ? "✅ تایید شد. شما به عنوان هاتوایف تایید شدید و اکنون می‌توانید محتوای عکس و فیلم ارسال کنید."
-    : `✅ تایید شد. شما به عنوان کاکولد ثبت نام شدید و اکنون می‌توانید از همه قابلیت‌های ربات استفاده کنید.\n\n⭐ موجودی امتیاز: ${pointResult?.balance || 0}`;
+    : proof.proofType === "bull"
+      ? "✅ درخواست شما تأیید شد. از این لحظه به عنوان بول تأییدشده در C Club ثبت شده‌اید."
+      : `✅ تایید شد. شما به عنوان کاکولد ثبت نام شدید و اکنون می‌توانید از همه قابلیت‌های ربات استفاده کنید.\n\n⭐ موجودی امتیاز: ${pointResult?.balance || 0}`;
   await sendMessage(env, proof.userId, approvedText, keyboard(await getMainMenuForUser(env, proof.userId)));
   await sendMessage(env, chatId, `✅ درخواست تایید شد.\nکد: ${proofId}`);
 }
@@ -1920,10 +2117,26 @@ async function rejectProofWithReason(env, query, proofId, reason) {
   proof.proofMedia1FileId = "";
   proof.proofMedia2FileId = "";
   proof.proofMedia3FileId = "";
+  proof.bullVideoNoteFileId = "";
   await env.BOT_KV.put(`proof:${proofId}`, JSON.stringify(proof));
-  await updateListItem(env, "proofs", proofId, (item) => ({ ...item, status: "rejected", reviewedAt: proof.reviewedAt, reviewedBy: proof.reviewedBy, rejectReason: finalReason }));
+  await updateListItem(env, "proofs", proofId, (item) => ({
+    ...item,
+    status: "rejected",
+    reviewedAt: proof.reviewedAt,
+    reviewedBy: proof.reviewedBy,
+    rejectReason: finalReason,
+    voiceFileId: "",
+    proofMedia1FileId: "",
+    proofMedia2FileId: "",
+    proofMedia3FileId: "",
+    bullVideoNoteFileId: ""
+  }));
 
-  const rejectedTitle = proof.proofType === "hotwife" ? "❌ درخواست اثبات هاتوایفی تایید نشد." : "❌ درخواست اثبات کاکولدی تایید نشد.";
+  const rejectedTitle = proof.proofType === "hotwife"
+    ? "❌ درخواست اثبات هاتوایفی تایید نشد."
+    : proof.proofType === "bull"
+      ? "❌ درخواست اثبات بول تایید نشد."
+      : "❌ درخواست اثبات کاکولدی تایید نشد.";
   await sendMessage(env, proof.userId, [rejectedTitle, "", `دلیل: ${finalReason}`].join("\n"), keyboard(BACK_TO_MENU));
   await sendMessage(env, chatId, `❌ درخواست رد شد.\nکد: ${proofId}\nدلیل: ${finalReason}`);
 }
@@ -3733,6 +3946,7 @@ async function handleAdminCallback(env, query, data) {
     const releases = await getList(env, "release_requests");
     const verified = profiles.filter((profile) => profile.cuckoldVerified);
     const verifiedHotwives = profiles.filter((profile) => profile.hotwifeVerified);
+    const verifiedBulls = profiles.filter((profile) => profile.bullVerified);
     const preverifiedHandles = await getPreverifiedCuckoldHandles(env);
     const specialPosts = await getSpecialPosts(env);
     const activeSpecialPosts = specialPosts.filter((post) => post.status === "scheduled");
@@ -3746,6 +3960,7 @@ async function handleAdminCallback(env, query, data) {
         `کاکولدهای تایید شده: ${verified.length}`,
         `یوزرنیم‌های تایید دستی: ${preverifiedHandles.length}`,
         `هاتوایف‌های تایید شده: ${verifiedHotwives.length}`,
+        `بول‌های تایید شده: ${verifiedBulls.length}`,
         `درخواست‌های اثبات: ${proofs.length}`,
         `اثبات‌های در انتظار: ${pendingProofs.length}`,
         `نوبت‌های مشاوره: ${bookings.length}`,
@@ -4826,7 +5041,7 @@ async function getBroadcastAudience(env, target) {
   const proofRefs = await getList(env, "proofs");
   const approvedIds = new Set(
     proofRefs
-      .filter((proof) => proof.status === "approved" && proof.proofType !== "hotwife")
+      .filter((proof) => proof.status === "approved" && proof.proofType === "cuckold")
       .map((proof) => String(proof.userId))
   );
   const preverified = new Set((await getPreverifiedCuckoldHandles(env)).map(normalizeTelegramHandle));
@@ -4944,7 +5159,7 @@ async function exportComprehensive(env, chatId) {
   const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "تاریخ ثبت‌نام", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تعداد آزمون", "آخرین نمره خام", "حداقل نمره", "حداکثر نمره", "درصد آزمون", "تیپ آزمون", "تعداد سوال", "زمان آخرین آزمون", "تعداد نوبت", "تعداد درخواست تخلیه", "درخواست ساخت عکس", "ساخت عکس در انتظار", "ساخت عکس تکمیل‌شده", "ساخت عکس ردشده", "تعداد کل پست", "تعداد عکس و فیلم", "تعداد اعتراف", "پست زمان‌بندی‌شده", "پست منتشرشده", "پست ردشده", "وضعیت آخرین پست", "نوع آخرین پست", "زمان‌بندی آخرین پست", "انتشار آخرین پست", "دلیل رد آخرین پست", "تعداد تیکت پشتیبانی", "تیکت باز", "وضعیت آخرین تیکت", "زمان آخرین تیکت", "وضعیت اثبات‌ها", "اینستاگرام اثبات", "اطلاع پارتنر", "دلیل رد اثبات"],
+    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "بول تاییدشده", "تاریخ ثبت‌نام", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تعداد آزمون", "آخرین نمره خام", "حداقل نمره", "حداکثر نمره", "درصد آزمون", "تیپ آزمون", "تعداد سوال", "زمان آخرین آزمون", "تعداد نوبت", "تعداد درخواست تخلیه", "درخواست ساخت عکس", "ساخت عکس در انتظار", "ساخت عکس تکمیل‌شده", "ساخت عکس ردشده", "تعداد کل پست", "تعداد عکس و فیلم", "تعداد اعتراف", "پست زمان‌بندی‌شده", "پست منتشرشده", "پست ردشده", "وضعیت آخرین پست", "نوع آخرین پست", "زمان‌بندی آخرین پست", "انتشار آخرین پست", "دلیل رد آخرین پست", "تعداد تیکت پشتیبانی", "تیکت باز", "وضعیت آخرین تیکت", "زمان آخرین تیکت", "وضعیت اثبات‌ها", "اینستاگرام اثبات", "اطلاع پارتنر", "دلیل رد اثبات", "نام کامل بول", "محل سکونت بول", "شغل بول", "قد بول", "وزن بول"],
     ...profiles.map((profile) => {
       const legacyUserTests = tests.filter((item) => item.userId === profile.userId);
       const optimizedUserTests = Array.isArray(profile.testHistory) ? profile.testHistory : [];
@@ -4972,6 +5187,7 @@ async function exportComprehensive(env, chatId) {
         profile.cuckoldVerified ? "yes" : "no",
         profile.cuckoldPreverified ? "yes" : "no",
         profile.hotwifeVerified ? "yes" : "no",
+        profile.bullVerified ? "yes" : "no",
         profile.createdAt,
         Number(profile.pointsBalance || 0),
         Number(profile.pointsLifetimeEarned || 0),
@@ -5008,7 +5224,12 @@ async function exportComprehensive(env, chatId) {
         userProofs.map((item) => item.status).join("|"),
         lastProof?.instagram ?? "",
         partnerAwarenessLabel(lastProof?.partnerAwareness),
-        lastRejectedProof?.rejectReason ?? ""
+        lastRejectedProof?.rejectReason ?? "",
+        lastProof?.bullFullName ?? "",
+        lastProof?.bullResidence ?? "",
+        lastProof?.bullJob ?? "",
+        lastProof?.bullHeightCm ?? "",
+        lastProof?.bullWeightKg ?? ""
       ];
     })
   ];
@@ -5282,7 +5503,7 @@ async function ensurePointAccount(env, userId) {
 
     const proofRefs = await getList(env, "proofs");
     const approvedProof = proofRefs.find((proof) =>
-      String(proof.userId) === String(userId) && proof.status === "approved" && proof.proofType !== "hotwife"
+      String(proof.userId) === String(userId) && proof.status === "approved" && proof.proofType === "cuckold"
     );
     if (approvedProof) {
       earned += POINT_REWARDS.proof;
@@ -5642,6 +5863,9 @@ async function getMainMenuForUser(env, userId) {
   if (profile.gender === "female" && profile.type === "hotwife" && !profile.hotwifeVerified) {
     rows.splice(1, 0, [{ text: "🧾 اثبات هاتوایفی", callback_data: "proof:start" }]);
   }
+  if (profile.gender === "male" && profile.type === "bull" && !profile.bullVerified) {
+    rows.splice(1, 0, [{ text: "🧾 اثبات به عنوان بول", callback_data: "proof:start" }]);
+  }
   return rows;
 }
 
@@ -5669,7 +5893,7 @@ function formatProfilesTable(title, profiles) {
 
 function profileRows(profiles) {
   return [
-    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تاریخ ثبت‌نام"],
+    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "بول تاییدشده", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تاریخ ثبت‌نام"],
     ...profiles.map((profile) => [
       profile.userId,
       profile.name,
@@ -5682,6 +5906,7 @@ function profileRows(profiles) {
       profile.cuckoldVerified ? "yes" : "no",
       profile.cuckoldPreverified ? "yes" : "no",
       profile.hotwifeVerified ? "yes" : "no",
+      profile.bullVerified ? "yes" : "no",
       Number(profile.pointsBalance || 0),
       Number(profile.pointsLifetimeEarned || 0),
       Number(profile.pointsLifetimeSpent || 0),
@@ -6416,6 +6641,14 @@ async function sendVoice(env, chatId, voice, caption, extra = {}) {
     chat_id: chatId,
     voice,
     caption,
+    ...extra
+  });
+}
+
+async function sendVideoNote(env, chatId, videoNote, extra = {}) {
+  return telegram(env, "sendVideoNote", {
+    chat_id: chatId,
+    video_note: videoNote,
     ...extra
   });
 }
