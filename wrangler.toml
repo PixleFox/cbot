@@ -6,6 +6,7 @@ compatibility_date = "2026-07-20"
 ADMIN_CHAT_ID = "7204112173"
 CHANNEL_ID = "@cuckzclub"
 MEDIA_CHANNEL_ID = "@cclubmedia"
+DISCUSSION_GROUP_USERNAME = "@cuckoldgaps"
 
 [triggers]
 crons = ["*/5 * * * *"]

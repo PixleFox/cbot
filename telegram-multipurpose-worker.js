@@ -2,6 +2,7 @@ import { strToU8, zipSync } from "fflate";
 
 const CHANNEL_USERNAME = "@cuckzclub";
 const MEDIA_CHANNEL_USERNAME = "@cclubmedia";
+const DISCUSSION_GROUP_USERNAME = "@cuckoldgaps";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
 const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-v2.png";
@@ -26,6 +27,10 @@ const DEFAULT_POST_MINUTE = 48;
 const BROADCAST_BATCH_SIZE = 12;
 const POINTS_VERSION = 1;
 const POINT_REWARDS = { photo: 3, video: 5, confession: 1, proof: 1 };
+const COMMENT_POINT_REWARD = 1;
+const COMMENT_DAILY_POINT_LIMIT = 5;
+const COMMENT_MIN_WORDS = 4;
+const COMMENT_MIN_CHARACTERS = 15;
 const SERVICE_COSTS = { release: 5, custom_video: 15, gif: 10, custom_image: 5, consultation: 1 };
 const CUSTOM_IMAGE_SCENARIOS = {
   selfie_two_men: "بین دو مرد، در حال گرفتن سلفی",
@@ -505,6 +510,10 @@ export default {
 };
 
 async function handleMessage(message, env) {
+  if (["group", "supergroup"].includes(message.chat?.type)) {
+    await handleDiscussionGroupMessage(env, message);
+    return;
+  }
   if (message.chat?.type !== "private") return;
 
   const chatId = String(message.chat.id);
@@ -743,6 +752,90 @@ async function handleMessage(message, env) {
   await sendMessage(env, chatId, "از منوی زیر انتخاب کن:", keyboard(await getMainMenuForUser(env, userId)));
 }
 
+async function handleDiscussionGroupMessage(env, message) {
+  const expectedUsername = String(env.DISCUSSION_GROUP_USERNAME || DISCUSSION_GROUP_USERNAME).replace(/^@/, "").toLowerCase();
+  const currentUsername = String(message.chat?.username || "").replace(/^@/, "").toLowerCase();
+  if (!expectedUsername || currentUsername !== expectedUsername) return;
+
+  const chatId = String(message.chat.id);
+  if (message.is_automatic_forward) {
+    if (message.photo?.length || message.video?.file_id) {
+      await env.BOT_KV.put(`media_comment_thread:${chatId}:${message.message_id}`, "1", { expirationTtl: 60 * 60 * 24 * 120 });
+    }
+    return;
+  }
+  if (!message.from?.id || message.from.is_bot) return;
+
+  const userId = String(message.from.id);
+  if (await getActiveBan(env, userId)) return;
+  const rootMessage = message.reply_to_message;
+  const threadId = Number(
+    message.message_thread_id
+      || rootMessage?.message_thread_id
+      || (rootMessage?.is_automatic_forward ? rootMessage.message_id : 0)
+  );
+  if (!threadId) return;
+
+  const threadKey = `media_comment_thread:${chatId}:${threadId}`;
+  let isMediaThread = Boolean(await env.BOT_KV.get(threadKey));
+  if (!isMediaThread && rootMessage?.is_automatic_forward && (rootMessage.photo?.length || rootMessage.video?.file_id)) {
+    isMediaThread = true;
+    await env.BOT_KV.put(threadKey, "1", { expirationTtl: 60 * 60 * 24 * 120 });
+  }
+  if (!isMediaThread) return;
+
+  const comment = cleanText(message.text || message.caption || "");
+  if (!comment || comment.startsWith("/") || countUrls(comment) > 0) return;
+  if (comment.length < COMMENT_MIN_CHARACTERS || wordCount(comment) < COMMENT_MIN_WORDS) return;
+
+  const profile = await getProfile(env, userId);
+  if (!isVerifiedPointsProfile(profile)) return;
+
+  const postRewardKey = `comment_post_reward:${chatId}:${threadId}:${userId}`;
+  if (await env.BOT_KV.get(postRewardKey)) return;
+
+  const commentHash = await sha256(comment.toLocaleLowerCase("fa-IR"));
+  const duplicateKey = `comment_text_reward:${userId}:${commentHash}`;
+  if (await env.BOT_KV.get(duplicateKey)) return;
+
+  const dateKey = tehranDateKey(new Date().toISOString());
+  const dailyKey = `comment_daily_reward:${dateKey}:${userId}`;
+  const dailyCount = Number(await env.BOT_KV.get(dailyKey) || 0);
+  if (dailyCount >= COMMENT_DAILY_POINT_LIMIT) return;
+
+  const pointResult = await changePoints(
+    env,
+    userId,
+    COMMENT_POINT_REWARD,
+    `earn:comment:${chatId}:${message.message_id}`,
+    `کامنت معتبر زیر پست رسانه‌ای ${threadId}`
+  );
+  if (!pointResult.ok || pointResult.duplicate) return;
+
+  const nextDailyCount = dailyCount + 1;
+  await Promise.all([
+    env.BOT_KV.put(postRewardKey, String(message.message_id), { expirationTtl: 60 * 60 * 24 * 120 }),
+    env.BOT_KV.put(duplicateKey, "1", { expirationTtl: 60 * 60 * 24 }),
+    env.BOT_KV.put(dailyKey, String(nextDailyCount), { expirationTtl: 60 * 60 * 48 })
+  ]);
+
+  try {
+    await sendMessage(
+      env,
+      userId,
+      [
+        "💬 کامنت معتبرت ثبت شد.",
+        "",
+        `⭐ امتیاز این کامنت: +${COMMENT_POINT_REWARD}`,
+        `⭐ موجودی جدید: ${pointResult.balance}`,
+        `سهم امروز: ${nextDailyCount} از ${COMMENT_DAILY_POINT_LIMIT}`
+      ].join("\n")
+    );
+  } catch {
+    // Award remains valid even if the user has disabled private bot notifications.
+  }
+}
+
 async function handleCallback(query, env) {
   const userId = String(query.from.id);
   const chatId = String(query.message.chat.id);
@@ -794,7 +887,7 @@ async function handleCallback(query, env) {
 
   if (data === "points:show") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
-    if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
+    if (!(await ensureVerifiedPointsProfile(env, chatId, userId))) return;
     await showPoints(env, chatId, userId);
     return;
   }
@@ -5159,7 +5252,7 @@ async function exportComprehensive(env, chatId) {
   const supportTickets = await getSupportTickets(env);
 
   const rows = [
-    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "بول تاییدشده", "تاریخ ثبت‌نام", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تعداد آزمون", "آخرین نمره خام", "حداقل نمره", "حداکثر نمره", "درصد آزمون", "تیپ آزمون", "تعداد سوال", "زمان آخرین آزمون", "تعداد نوبت", "تعداد درخواست تخلیه", "درخواست ساخت عکس", "ساخت عکس در انتظار", "ساخت عکس تکمیل‌شده", "ساخت عکس ردشده", "تعداد کل پست", "تعداد عکس و فیلم", "تعداد اعتراف", "پست زمان‌بندی‌شده", "پست منتشرشده", "پست ردشده", "وضعیت آخرین پست", "نوع آخرین پست", "زمان‌بندی آخرین پست", "انتشار آخرین پست", "دلیل رد آخرین پست", "تعداد تیکت پشتیبانی", "تیکت باز", "وضعیت آخرین تیکت", "زمان آخرین تیکت", "وضعیت اثبات‌ها", "اینستاگرام اثبات", "اطلاع پارتنر", "دلیل رد اثبات", "نام کامل بول", "محل سکونت بول", "شغل بول", "قد بول", "وزن بول"],
+    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "بول تاییدشده", "تاریخ ثبت‌نام", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تعداد کامنت امتیازدار", "امتیاز دریافتی از کامنت", "آخرین امتیاز کامنت", "تعداد آزمون", "آخرین نمره خام", "حداقل نمره", "حداکثر نمره", "درصد آزمون", "تیپ آزمون", "تعداد سوال", "زمان آخرین آزمون", "تعداد نوبت", "تعداد درخواست تخلیه", "درخواست ساخت عکس", "ساخت عکس در انتظار", "ساخت عکس تکمیل‌شده", "ساخت عکس ردشده", "تعداد کل پست", "تعداد عکس و فیلم", "تعداد اعتراف", "پست زمان‌بندی‌شده", "پست منتشرشده", "پست ردشده", "وضعیت آخرین پست", "نوع آخرین پست", "زمان‌بندی آخرین پست", "انتشار آخرین پست", "دلیل رد آخرین پست", "تعداد تیکت پشتیبانی", "تیکت باز", "وضعیت آخرین تیکت", "زمان آخرین تیکت", "وضعیت اثبات‌ها", "اینستاگرام اثبات", "اطلاع پارتنر", "دلیل رد اثبات", "نام کامل بول", "محل سکونت بول", "شغل بول", "قد بول", "وزن بول"],
     ...profiles.map((profile) => {
       const legacyUserTests = tests.filter((item) => item.userId === profile.userId);
       const optimizedUserTests = Array.isArray(profile.testHistory) ? profile.testHistory : [];
@@ -5192,6 +5285,9 @@ async function exportComprehensive(env, chatId) {
         Number(profile.pointsBalance || 0),
         Number(profile.pointsLifetimeEarned || 0),
         Number(profile.pointsLifetimeSpent || 0),
+        Number(profile.commentRewardCount || 0),
+        Number(profile.commentPointsEarned || 0),
+        profile.lastCommentRewardAt || "",
         userTests.length,
         lastTest?.total ?? "",
         lastTest?.min ?? "",
@@ -5547,6 +5643,7 @@ async function changePoints(env, userId, amount, transactionId, reason) {
   const balance = Number(profile.pointsBalance || 0);
   if (amount < 0 && balance < Math.abs(amount)) return { ok: false, balance, needed: Math.abs(amount) };
   const isRefund = String(transactionId).startsWith("refund:");
+  const isCommentReward = String(transactionId).startsWith("earn:comment:");
 
   const updated = {
     ...profile,
@@ -5555,7 +5652,10 @@ async function changePoints(env, userId, amount, transactionId, reason) {
     pointsLifetimeSpent: isRefund
       ? Math.max(0, Number(profile.pointsLifetimeSpent || 0) - Math.max(amount, 0))
       : Number(profile.pointsLifetimeSpent || 0) + Math.max(-amount, 0),
-    pointsUpdatedAt: new Date().toISOString()
+    pointsUpdatedAt: new Date().toISOString(),
+    commentRewardCount: Number(profile.commentRewardCount || 0) + (isCommentReward ? 1 : 0),
+    commentPointsEarned: Number(profile.commentPointsEarned || 0) + (isCommentReward ? Math.max(amount, 0) : 0),
+    lastCommentRewardAt: isCommentReward ? new Date().toISOString() : (profile.lastCommentRewardAt || "")
   };
   const transaction = {
     id: transactionId,
@@ -5591,24 +5691,48 @@ async function awardPostPoints(env, post, currentProfile = null) {
 
 async function showPoints(env, chatId, userId) {
   const profile = await ensurePointAccount(env, userId);
+  const commentPointsToday = Number(await env.BOT_KV.get(`comment_daily_reward:${tehranDateKey(new Date().toISOString())}:${userId}`) || 0);
+  const isBull = profile?.type === "bull";
+  const earningLines = isBull
+    ? [
+        "💬 هر کامنت معتبر زیر پست عکس یا فیلم: ۱ ⭐",
+        "",
+        profile.bullVerified ? "✅ امتیاز کامنت برای پروفایل بول شما فعال است." : "⏳ امتیاز کامنت بعد از تأیید اثبات بول فعال می‌شود."
+      ]
+    : [
+        "🖼 عکس تاییدشده: ۳ ⭐",
+        "🎬 فیلم تاییدشده: ۵ ⭐",
+        "✍️ اعتراف تاییدشده: ۱ ⭐",
+        "🧾 تکمیل اثبات کاکولدی: ۱ ⭐",
+        "💬 هر کامنت معتبر زیر پست عکس یا فیلم: ۱ ⭐"
+      ];
+  const serviceLines = isBull
+    ? ["امتیازهای شما در پروفایل ذخیره می‌شوند و در خدمات مخصوص بول‌ها قابل استفاده خواهند بود."]
+    : [
+        "هزینه خدمات:",
+        "💧 تخلیه آب بیغیرتی: ۵ ⭐",
+        "🎭 فیلم با چهره دلخواه: ۱۵ ⭐",
+        "🟢 گیف با کپشن: ۱۰ ⭐",
+        "🖼 عکس با چهره دلخواه: ۵ ⭐",
+        "📅 مشاوره: ۱ ⭐"
+      ];
   await sendMessage(
     env,
     chatId,
     [
       `⭐ امتیاز فعلی شما: ${Number(profile?.pointsBalance || 0)} ⭐`,
+      `💬 امتیاز کامنت امروز: ${commentPointsToday} از ${COMMENT_DAILY_POINT_LIMIT}`,
       "",
       "کسب امتیاز:",
-      "🖼 عکس تاییدشده: ۳ ⭐",
-      "🎬 فیلم تاییدشده: ۵ ⭐",
-      "✍️ اعتراف تاییدشده: ۱ ⭐",
-      "🧾 تکمیل اثبات کاکولدی: ۱ ⭐",
+      ...earningLines,
       "",
-      "هزینه خدمات:",
-      "💧 تخلیه آب بیغیرتی: ۵ ⭐",
-      "🎭 فیلم با چهره دلخواه: ۱۵ ⭐",
-      "🟢 گیف با کپشن: ۱۰ ⭐",
-      "🖼 عکس با چهره دلخواه: ۵ ⭐",
-      "📅 مشاوره: ۱ ⭐"
+      "قانون امتیاز کامنت:",
+      `• حداقل ${COMMENT_MIN_WORDS} کلمه و ${COMMENT_MIN_CHARACTERS} کاراکتر`,
+      "• بدون لینک و متن تکراری",
+      "• برای هر پست فقط یک امتیاز",
+      `• حداکثر ${COMMENT_DAILY_POINT_LIMIT} امتیاز در روز`,
+      "",
+      ...serviceLines
     ].join("\n"),
     keyboard(await getMainMenuForUser(env, userId))
   );
@@ -5832,6 +5956,24 @@ async function ensureVerifiedCuckold(env, chatId, userId) {
   return false;
 }
 
+function isVerifiedPointsProfile(profile) {
+  const verifiedCuckold = profile?.registered && profile.type === "cuckold" && profile.cuckoldVerified;
+  const verifiedBull = profile?.registered && profile.type === "bull" && profile.bullVerified;
+  return Boolean(verifiedCuckold || verifiedBull);
+}
+
+async function ensureVerifiedPointsProfile(env, chatId, userId) {
+  const profile = await getProfile(env, userId);
+  if (isVerifiedPointsProfile(profile) || (profile?.registered && profile.type === "bull")) return true;
+  await sendMessage(
+    env,
+    chatId,
+    "⛔️ سیستم امتیاز فعلاً برای کاکولدهای تأییدشده و پروفایل‌های بول فعال است.",
+    keyboard(BACK_TO_MENU)
+  );
+  return false;
+}
+
 async function ensureVerifiedContentSubmitter(env, chatId, userId) {
   const profile = await getProfile(env, userId);
   const verifiedCuckold = profile?.registered && profile.gender === "male" && profile.type === "cuckold" && profile.cuckoldVerified;
@@ -5885,7 +6027,14 @@ function cleanText(value) {
 function formatProfilesTable(title, profiles) {
   const lines = [title, ""];
   for (const profile of profiles.slice(0, 30)) {
-    lines.push(`${profile.name || "-"} | ${profile.username || "-"} | ${profile.age || "-"} | ${profile.city || "-"} | ${profile.typeLabel || profile.type || "-"} | ${profile.cuckoldVerified ? "تایید" : "بدون تایید"} | ${Number(profile.pointsBalance || 0)} ⭐`);
+    const verified = profile.type === "cuckold"
+      ? profile.cuckoldVerified
+      : profile.type === "hotwife"
+        ? profile.hotwifeVerified
+        : profile.type === "bull"
+          ? profile.bullVerified
+          : false;
+    lines.push(`${profile.name || "-"} | ${profile.username || "-"} | ${profile.age || "-"} | ${profile.city || "-"} | ${profile.typeLabel || profile.type || "-"} | ${verified ? "تایید" : "بدون تایید"} | ${Number(profile.pointsBalance || 0)} ⭐`);
   }
   if (profiles.length > 30) lines.push(`... و ${profiles.length - 30} مورد دیگر`);
   return lines.join("\n");
@@ -5893,7 +6042,7 @@ function formatProfilesTable(title, profiles) {
 
 function profileRows(profiles) {
   return [
-    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "بول تاییدشده", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تاریخ ثبت‌نام"],
+    ["شناسه کاربر", "نام", "یوزرنیم", "سن", "جنسیت", "وضعیت تأهل", "شهر", "نوع", "کاکولد تاییدشده", "کاکولد پیش‌تایید", "هاتوایف تاییدشده", "بول تاییدشده", "موجودی امتیاز", "کل امتیاز دریافتی", "کل امتیاز مصرفی", "تعداد کامنت امتیازدار", "امتیاز کامنت", "آخرین امتیاز کامنت", "تاریخ ثبت‌نام"],
     ...profiles.map((profile) => [
       profile.userId,
       profile.name,
@@ -5910,6 +6059,9 @@ function profileRows(profiles) {
       Number(profile.pointsBalance || 0),
       Number(profile.pointsLifetimeEarned || 0),
       Number(profile.pointsLifetimeSpent || 0),
+      Number(profile.commentRewardCount || 0),
+      Number(profile.commentPointsEarned || 0),
+      profile.lastCommentRewardAt || "",
       profile.createdAt
     ])
   ];
