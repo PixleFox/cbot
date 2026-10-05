@@ -2984,6 +2984,7 @@ async function finishBookingWithSlot(env, query, state, slotId) {
     reminderSent: false,
     pointsCost: SERVICE_COSTS.consultation,
     pointsTransactionId: `spend:consultation:${bookingId}`,
+    pointsBalanceAfterCharge: pointCharge.balance,
     status: "scheduled",
     createdAt: new Date().toISOString()
   };
@@ -3021,7 +3022,8 @@ async function finishBookingWithSlot(env, query, state, slotId) {
       `نام: ${booking.name}`,
       `تماس: ${booking.contact}`,
       `موضوع: ${booking.topic}`,
-      `هزینه: ${SERVICE_COSTS.consultation} ⭐`
+      `هزینه کسرشده: ${SERVICE_COSTS.consultation} ⭐`,
+      `موجودی پس از کسر: ${pointCharge.balance} ⭐`
     ].join("\n"),
     keyboard([[{ text: "❌ لغو و بازگشت امتیاز", callback_data: `service:cancel:booking:${bookingId}` }]])
   );
@@ -3228,6 +3230,7 @@ async function finishReleaseWithSlot(env, query, state, slotId) {
     type: "release",
     pointsCost: SERVICE_COSTS.release,
     pointsTransactionId: `spend:release:${requestId}`,
+    pointsBalanceAfterCharge: pointCharge.balance,
     reminderSent: false,
     createdAt: new Date().toISOString()
   };
@@ -3262,7 +3265,8 @@ async function finishReleaseWithSlot(env, query, state, slotId) {
       `کد: ${requestId}`,
       `زمان: ${slot.label}`,
       `کاربر: ${formatUser(query.from)}`,
-      `هزینه: ${SERVICE_COSTS.release} ⭐`
+      `هزینه کسرشده: ${SERVICE_COSTS.release} ⭐`,
+      `موجودی پس از کسر: ${pointCharge.balance} ⭐`
     ].join("\n"),
     keyboard([[{ text: "❌ لغو و بازگشت امتیاز", callback_data: `service:cancel:release:${requestId}` }]])
   );
@@ -3315,6 +3319,15 @@ async function handleServiceProposedTime(env, message, state, text) {
   }
 
   const isBooking = state.serviceKind === "booking";
+  const pointsCost = isBooking ? SERVICE_COSTS.consultation : SERVICE_COSTS.release;
+  const pointProfile = await ensurePointAccount(env, userId);
+  const pointsBalance = Number(pointProfile?.pointsBalance || 0);
+  if (pointsBalance < pointsCost) {
+    await clearState(env, userId);
+    await sendInsufficientPoints(env, chatId, userId, pointsCost);
+    return;
+  }
+
   const requestId = shortId();
   const request = {
     id: requestId,
@@ -3328,7 +3341,8 @@ async function handleServiceProposedTime(env, message, state, text) {
     startsAt,
     proposedByUser: true,
     status: "pending_admin",
-    pointsCost: isBooking ? SERVICE_COSTS.consultation : SERVICE_COSTS.release,
+    pointsCost,
+    pointsBalanceAtSubmission: pointsBalance,
     reminderSent: false,
     createdAt: new Date().toISOString(),
     ...(isBooking
@@ -3358,7 +3372,9 @@ async function handleServiceProposedTime(env, message, state, text) {
       `تاریخ دقیق: ${formatDateTime(request.startsAt)}`,
       `کاربر: ${formatUser(message.from)}`,
       ...(isBooking ? [`نام: ${request.name}`, `تماس: ${request.contact}`, `موضوع: ${request.topic}`] : []),
-      `هزینه پس از تأیید: ${request.pointsCost} ⭐`
+      `هزینه پس از تأیید: ${request.pointsCost} ⭐`,
+      `موجودی فعلی کاربر: ${request.pointsBalanceAtSubmission} ⭐`,
+      "امتیاز فقط با زدن دکمه تأیید زمان کسر می‌شود."
     ].join("\n"),
     keyboard([[
       { text: "✅ تأیید زمان", callback_data: `proposal:approve:${state.serviceKind}:${requestId}` },
@@ -3420,6 +3436,7 @@ async function approveServiceTimeProposal(env, query, kind, requestId) {
   request.slotId = slot.id;
   request.pointsCost = cost;
   request.pointsTransactionId = transactionId;
+  request.pointsBalanceAfterCharge = charge.balance;
   request.approvedAt = new Date().toISOString();
   request.approvedBy = String(query.from.id);
   try {
@@ -3440,7 +3457,7 @@ async function approveServiceTimeProposal(env, query, kind, requestId) {
   await sendMessage(
     env,
     chatId,
-    `✅ زمان تأیید و رزرو قطعی شد.\nکد: ${requestId}`,
+    `✅ زمان تأیید و رزرو قطعی شد.\nکد: ${requestId}\nهزینه کسرشده: ${cost} ⭐\nموجودی کاربر: ${charge.balance} ⭐`,
     keyboard([[{ text: "❌ لغو و بازگشت امتیاز", callback_data: `service:cancel:${kind}:${requestId}` }], ...ADMIN_MENU])
   );
 }
@@ -3580,6 +3597,7 @@ async function confirmCustomImageRequest(env, query) {
     scenarioKey: state.scenarioKey,
     scenarioLabel: CUSTOM_IMAGE_SCENARIOS[state.scenarioKey],
     pointsCost: SERVICE_COSTS.custom_image,
+    pointsBalanceAfterCharge: charge.balance,
     status: "pending",
     createdAt: new Date().toISOString()
   };
@@ -3611,7 +3629,8 @@ async function sendCustomImageRequestToAdmin(env, request) {
       `کد: ${request.id}`,
       `کاربر: ${request.firstName || "-"} | ${request.username ? `@${request.username}` : request.userId}`,
       `سناریو: ${request.scenarioLabel}`,
-      `هزینه پرداخت‌شده: ${request.pointsCost} ⭐`
+      `هزینه کسرشده: ${request.pointsCost} ⭐`,
+      `موجودی پس از کسر: ${request.pointsBalanceAfterCharge ?? "-"} ⭐`
     ].join("\n"),
     keyboard([[
       { text: "📤 ارسال عکس نهایی", callback_data: `custom_image:reply:${request.id}` },
