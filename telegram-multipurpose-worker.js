@@ -31,6 +31,9 @@ const COMMENT_POINT_REWARD = 1;
 const COMMENT_DAILY_POINT_LIMIT = 5;
 const COMMENT_MIN_WORDS = 4;
 const COMMENT_MIN_CHARACTERS = 15;
+const GROUP_MUTE_SECONDS = 60 * 60 * 24 * 3;
+const GROUP_REPEAT_WINDOW_MS = 2 * 60 * 1000;
+const GROUP_REPEAT_CACHE_LIMIT = 2000;
 const SERVICE_COSTS = { release: 5, custom_video: 15, gif: 10, custom_image: 5, consultation: 1 };
 const CUSTOM_IMAGE_SCENARIOS = {
   selfie_two_men: "بین دو مرد، در حال گرفتن سلفی",
@@ -47,6 +50,27 @@ const PROOF_REJECT_REASONS = {
   incomplete: "اطلاعات یا فایل‌های ارسالی کامل نیست",
   mismatch: "اطلاعات ارسالی با ثبت‌نام همخوانی ندارد"
 };
+
+const GROUP_PROFANITY_TERMS = [
+  "مادرجنده", "مادرقحبه", "مادر قحبه", "مادر جنده", "کسکش", "کصکش",
+  "جاکش", "قحبه", "جنده", "دیوث", "کونی", "کونده", "کص", "کیر",
+  "گایید", "گاییده", "بکنمت", "سیکتیر", "حرومزاده", "حرامزاده",
+  "بی ناموس", "بیناموس", "بی شرف", "بیشرف", "لاشی", "فاحشه", "گوه"
+];
+const GROUP_FAKE_CLAIM_PATTERNS = [
+  /(?:عکس|فیلم|ویدیو|مدیا|پروفایل|آدم|طرف|این)\s*(?:ها|ش)?\s*(?:فیک|جعلی|ساختگی)/u,
+  /(?:فیک|جعلی|ساختگی)\s*(?:هست|است|ه|ن|هستند)/u,
+  /واقعی\s*نیست/u,
+  /(?:هوش\s*مصنوعی|دیپ\s*فیک|فتوشاپ)\s*(?:هست|است|ه|شده)/u,
+  /با\s*هوش\s*مصنوعی\s*(?:ساخته|درست|تولید)/u,
+  /(?:ai\s*generated|deep\s*fake)/i,
+  /(?:مال|عکس)\s*خودش\s*نیست/u
+];
+const GROUP_RISKY_LINK_HOSTS = new Set([
+  "bit.ly", "tinyurl.com", "t.co", "cutt.ly", "rebrand.ly", "shorturl.at",
+  "is.gd", "rb.gy", "ow.ly", "buff.ly"
+]);
+const recentGroupMessages = new Map();
 
 const QUESTIONS = [
   {
@@ -766,6 +790,8 @@ async function handleDiscussionGroupMessage(env, message) {
   }
   if (!message.from?.id || message.from.is_bot) return;
 
+  if (await moderateDiscussionGroupMessage(env, message)) return;
+
   const userId = String(message.from.id);
   if (await getActiveBan(env, userId)) return;
   const rootMessage = message.reply_to_message;
@@ -834,6 +860,223 @@ async function handleDiscussionGroupMessage(env, message) {
   } catch {
     // Award remains valid even if the user has disabled private bot notifications.
   }
+}
+
+async function moderateDiscussionGroupMessage(env, message) {
+  const userId = String(message.from.id);
+  if (isAdmin(env, userId)) return false;
+
+  const violation = detectGroupModerationViolation(message);
+  if (!violation) return false;
+  if (await isTelegramChatAdmin(env, message.chat.id, userId)) return false;
+
+  const chatId = String(message.chat.id);
+  try {
+    await telegram(env, "deleteMessage", { chat_id: chatId, message_id: message.message_id });
+  } catch (error) {
+    await safeNotifyAdmin(env, `⚠️ حذف پیام متخلف در گپ ناموفق بود.\n${String(error?.message || error)}`);
+  }
+
+  const strikeKey = `group_mod_strike:${chatId}:${userId}`;
+  const previous = await getJson(env, strikeKey);
+  const strikeCount = Number(previous?.strikeCount || 0) + 1;
+  const userLabel = message.from.username
+    ? `@${message.from.username}`
+    : cleanText([message.from.first_name, message.from.last_name].filter(Boolean).join(" ")) || userId;
+  const now = new Date().toISOString();
+
+  if (strikeCount >= 2) {
+    await telegram(env, "banChatMember", {
+      chat_id: chatId,
+      user_id: userId,
+      revoke_messages: true
+    });
+    await env.BOT_KV.put(strikeKey, JSON.stringify({
+      strikeCount,
+      status: "banned",
+      reason: violation.code,
+      reasonLabel: violation.label,
+      lastMessageId: message.message_id,
+      updatedAt: now
+    }));
+    await sendMessage(
+      env,
+      chatId,
+      `⛔️ ${userLabel} به‌دلیل تکرار تخلف از گپ اخراج شد و پیام‌هایش حذف شدند.\nدلیل: ${violation.label}`
+    );
+    return true;
+  }
+
+  const untilDate = Math.floor(Date.now() / 1000) + GROUP_MUTE_SECONDS;
+  await telegram(env, "restrictChatMember", {
+    chat_id: chatId,
+    user_id: userId,
+    until_date: untilDate,
+    use_independent_chat_permissions: true,
+    permissions: {
+      can_send_messages: false,
+      can_send_audios: false,
+      can_send_documents: false,
+      can_send_photos: false,
+      can_send_videos: false,
+      can_send_video_notes: false,
+      can_send_voice_notes: false,
+      can_send_polls: false,
+      can_send_other_messages: false,
+      can_add_web_page_previews: false,
+      can_change_info: false,
+      can_invite_users: false,
+      can_pin_messages: false,
+      can_manage_topics: false
+    }
+  });
+  await env.BOT_KV.put(strikeKey, JSON.stringify({
+    strikeCount,
+    status: "muted",
+    reason: violation.code,
+    reasonLabel: violation.label,
+    mutedUntil: new Date(untilDate * 1000).toISOString(),
+    lastMessageId: message.message_id,
+    updatedAt: now
+  }));
+  await sendMessage(
+    env,
+    chatId,
+    `🔇 ${userLabel} به‌دلیل نقض قوانین برای ۳ روز سکوت شد.\nدلیل: ${violation.label}\nتکرار تخلف باعث اخراج دائمی و حذف پیام‌ها می‌شود.`
+  );
+  return true;
+}
+
+function detectGroupModerationViolation(message) {
+  const rawText = cleanText(message.text || message.caption || "");
+  const normalizedText = normalizeModerationText(rawText);
+  const compactText = normalizedText.replace(/\s+/g, "");
+
+  if (normalizedText && GROUP_PROFANITY_TERMS.some((term) => {
+    const normalizedTerm = normalizeModerationText(term);
+    return normalizedText.includes(normalizedTerm) || compactText.includes(normalizedTerm.replace(/\s+/g, ""));
+  })) {
+    return { code: "profanity", label: "فحاشی یا استفاده از واژه رکیک" };
+  }
+
+  if (normalizedText && GROUP_FAKE_CLAIM_PATTERNS.some((pattern) => pattern.test(normalizedText))) {
+    return { code: "fake_claim", label: "ادعای فیک، جعلی یا هوش مصنوعی بودن افراد و محتوا" };
+  }
+
+  if (hasSuspiciousGroupLink(message, rawText)) {
+    return { code: "unsafe_link", label: "ارسال لینک مشکوک، دعوت ناشناس یا تبلیغ ربات" };
+  }
+
+  if (isRepeatedGroupMessage(message, normalizedText)) {
+    return { code: "repeated_message", label: "ارسال پیام یا محتوای تکراری پشت سر هم" };
+  }
+
+  return null;
+}
+
+function normalizeModerationText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[يى]/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[ةۀ]/g, "ه")
+    .replace(/[\u064B-\u065F\u0670\u200B-\u200D\uFEFF]/g, "")
+    .replace(/(.)\1{2,}/gu, "$1")
+    .replace(/[^\p{L}\p{N}@:/._+\-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isRepeatedGroupMessage(message, normalizedText) {
+  const fingerprint = groupMessageFingerprint(message, normalizedText);
+  if (!fingerprint) return false;
+
+  const now = Date.now();
+  const key = `${message.chat.id}:${message.from.id}`;
+  const previous = recentGroupMessages.get(key);
+  const repeated = Boolean(
+    previous
+      && previous.fingerprint === fingerprint
+      && now - previous.createdAt <= GROUP_REPEAT_WINDOW_MS
+  );
+  recentGroupMessages.set(key, { fingerprint, createdAt: now });
+
+  if (recentGroupMessages.size > GROUP_REPEAT_CACHE_LIMIT) {
+    for (const [cacheKey, item] of recentGroupMessages) {
+      if (now - item.createdAt > GROUP_REPEAT_WINDOW_MS) recentGroupMessages.delete(cacheKey);
+      if (recentGroupMessages.size <= GROUP_REPEAT_CACHE_LIMIT) break;
+    }
+    if (recentGroupMessages.size > GROUP_REPEAT_CACHE_LIMIT) {
+      recentGroupMessages.delete(recentGroupMessages.keys().next().value);
+    }
+  }
+  return repeated;
+}
+
+function groupMessageFingerprint(message, normalizedText) {
+  if (normalizedText) return `text:${normalizedText.slice(0, 600)}`;
+  if (message.photo?.length) return `photo:${message.photo[message.photo.length - 1].file_unique_id || message.photo[message.photo.length - 1].file_id}`;
+  if (message.video?.file_unique_id || message.video?.file_id) return `video:${message.video.file_unique_id || message.video.file_id}`;
+  if (message.animation?.file_unique_id || message.animation?.file_id) return `animation:${message.animation.file_unique_id || message.animation.file_id}`;
+  if (message.document?.file_unique_id || message.document?.file_id) return `document:${message.document.file_unique_id || message.document.file_id}`;
+  if (message.sticker?.file_unique_id || message.sticker?.file_id) return `sticker:${message.sticker.file_unique_id || message.sticker.file_id}`;
+  return "";
+}
+
+function hasSuspiciousGroupLink(message, rawText) {
+  if (message.via_bot?.id) return true;
+  const officialBots = new Set(["cucksclubbot", "myfreecodedbot"]);
+  const mentionedBots = [...String(rawText || "").matchAll(/@([A-Za-z0-9_]{5,28}bot)\b/gi)];
+  if (mentionedBots.some((match) => !officialBots.has(match[1].toLowerCase()))) return true;
+
+  const urls = extractMessageUrls(message, rawText);
+  return urls.some((rawUrl) => {
+    const prepared = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    let url;
+    try {
+      url = new URL(prepared);
+    } catch {
+      return true;
+    }
+
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    let path;
+    try {
+      path = decodeURIComponent(url.pathname).replace(/^\/+/, "").toLowerCase();
+    } catch {
+      return true;
+    }
+    if (GROUP_RISKY_LINK_HOSTS.has(host) || host.startsWith("xn--") || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) return true;
+    if (/\.(?:apk|exe|msi|bat|cmd|scr|jar|zip|rar)(?:$|[?#])/i.test(url.pathname)) return true;
+    if (prepared.length > 300 || url.username || url.password) return true;
+
+    if (["t.me", "telegram.me"].includes(host)) {
+      const allowedTelegramTargets = [
+        "cuckoldgaps", "cclubmedia", "cuckzclub", "cucksclubbot",
+        "+y2fjepdjagkxm2fk", "+-0j3tcozqmm1zjjk"
+      ];
+      const target = path.split(/[/?#]/)[0];
+      if (allowedTelegramTargets.includes(target)) return false;
+      if (target.endsWith("bot") || path.includes("start=") || path.startsWith("+") || path.startsWith("joinchat/")) return true;
+    }
+    return false;
+  });
+}
+
+function extractMessageUrls(message, rawText) {
+  const urls = new Set(String(rawText || "").match(/(?:https?:\/\/|t\.me\/|telegram\.me\/)[^\s<>()]+/gi) || []);
+  const source = String(message.text || message.caption || "");
+  const entities = [...(message.entities || []), ...(message.caption_entities || [])];
+  for (const entity of entities) {
+    if (entity.type === "text_link" && entity.url) urls.add(entity.url);
+    if (entity.type === "url") urls.add(source.slice(entity.offset, entity.offset + entity.length));
+  }
+  return [...urls];
+}
+
+async function isTelegramChatAdmin(env, chatId, userId) {
+  const result = await telegram(env, "getChatMember", { chat_id: chatId, user_id: userId });
+  return ["creator", "administrator"].includes(result.result?.status);
 }
 
 async function handleCallback(query, env) {
