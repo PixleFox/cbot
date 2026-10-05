@@ -66,6 +66,16 @@ const GROUP_FAKE_CLAIM_PATTERNS = [
   /(?:ai\s*generated|deep\s*fake)/i,
   /(?:مال|عکس)\s*خودش\s*نیست/u
 ];
+const GROUP_FIGHT_PATTERNS = [
+  /خفه\s*شو/u,
+  /گمشو/u,
+  /زر\s*نزن/u,
+  /دهنت?\s*(?:رو|و)\s*ببند/u,
+  /برو\s*بمیر/u,
+  /خفه\s*خون\s*بگیر/u,
+  /جمعش?\s*کن/u,
+  /آدم\s*شو/u
+];
 const GROUP_RISKY_LINK_HOSTS = new Set([
   "bit.ly", "tinyurl.com", "t.co", "cutt.ly", "rebrand.ly", "shorturl.at",
   "is.gd", "rb.gy", "ow.ly", "buff.ly"
@@ -883,6 +893,7 @@ async function moderateDiscussionGroupMessage(env, message) {
   const userLabel = message.from.username
     ? `@${message.from.username}`
     : cleanText([message.from.first_name, message.from.last_name].filter(Boolean).join(" ")) || userId;
+  const isolatedUserLabel = `\u2068${userLabel}\u2069`;
   const now = new Date().toISOString();
 
   if (strikeCount >= 2) {
@@ -902,7 +913,11 @@ async function moderateDiscussionGroupMessage(env, message) {
     await sendMessage(
       env,
       chatId,
-      `⛔️ ${userLabel} به‌دلیل تکرار تخلف از گپ اخراج شد و پیام‌هایش حذف شدند.\nدلیل: ${violation.label}`
+      [
+        `\u200F⛔️ کاربر ${isolatedUserLabel} به‌دلیل تکرار تخلف از گپ اخراج شد.`,
+        "\u200F🗑 همه پیام‌های این کاربر حذف شدند.",
+        `\u200F📌 دلیل: ${violation.label}`
+      ].join("\n")
     );
     return true;
   }
@@ -942,7 +957,11 @@ async function moderateDiscussionGroupMessage(env, message) {
   await sendMessage(
     env,
     chatId,
-    `🔇 ${userLabel} به‌دلیل نقض قوانین برای ۳ روز سکوت شد.\nدلیل: ${violation.label}\nتکرار تخلف باعث اخراج دائمی و حذف پیام‌ها می‌شود.`
+    [
+      `\u200F🔇 کاربر ${isolatedUserLabel} به‌دلیل نقض قوانین برای ۳ روز سکوت شد.`,
+      `\u200F📌 دلیل: ${violation.label}`,
+      "\u200F⚠️ تکرار تخلف باعث اخراج دائمی و حذف همه پیام‌ها می‌شود."
+    ].join("\n")
   );
   return true;
 }
@@ -952,11 +971,16 @@ function detectGroupModerationViolation(message) {
   const normalizedText = normalizeModerationText(rawText);
   const compactText = normalizedText.replace(/\s+/g, "");
 
-  if (normalizedText && GROUP_PROFANITY_TERMS.some((term) => {
+  const containsProfanity = normalizedText && GROUP_PROFANITY_TERMS.some((term) => {
     const normalizedTerm = normalizeModerationText(term);
     return normalizedText.includes(normalizedTerm) || compactText.includes(normalizedTerm.replace(/\s+/g, ""));
-  })) {
-    return { code: "profanity", label: "فحاشی یا استفاده از واژه رکیک" };
+  });
+  if (containsProfanity && isDirectedGroupAbuse(message, normalizedText)) {
+    return { code: "directed_abuse", label: "فحاشی و توهین مستقیم به اعضای گپ" };
+  }
+
+  if (normalizedText && GROUP_FIGHT_PATTERNS.some((pattern) => pattern.test(normalizedText))) {
+    return { code: "group_fight", label: "دعوا و برخورد توهین‌آمیز با اعضای گپ" };
   }
 
   if (normalizedText && GROUP_FAKE_CLAIM_PATTERNS.some((pattern) => pattern.test(normalizedText))) {
@@ -972,6 +996,18 @@ function detectGroupModerationViolation(message) {
   }
 
   return null;
+}
+
+function isDirectedGroupAbuse(message, normalizedText) {
+  const repliedUserId = message.reply_to_message?.from?.id;
+  if (repliedUserId && String(repliedUserId) !== String(message.from.id)) return true;
+
+  const ownUsername = String(message.from.username || "").toLowerCase();
+  const mentions = [...String(message.text || message.caption || "").matchAll(/@([A-Za-z0-9_]{5,32})/g)]
+    .map((match) => match[1].toLowerCase());
+  if (mentions.some((username) => username !== ownUsername)) return true;
+
+  return /(?:^|\s)(?:تو|شما|خودت|خودتون|مادرت|مادرتون|خواهرت|خواهرتون|زنت|زن‌ت|همسرت|این\s*یارو|اون\s*یارو)(?:\s|$)/u.test(normalizedText);
 }
 
 function normalizeModerationText(value) {
