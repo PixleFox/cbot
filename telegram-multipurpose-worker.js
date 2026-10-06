@@ -53,8 +53,7 @@ const PROOF_REJECT_REASONS = {
 
 const GROUP_PROFANITY_TERMS = [
   "مادرجنده", "مادرقحبه", "مادر قحبه", "مادر جنده", "کسکش", "کصکش",
-  "جاکش", "قحبه", "جنده", "دیوث", "کونی", "کونده", "کص", "کیر",
-  "گایید", "گاییده", "بکنمت", "سیکتیر", "حرومزاده", "حرامزاده",
+  "جاکش", "قحبه", "جنده", "دیوث", "سیکتیر", "حرومزاده", "حرامزاده",
   "بی ناموس", "بیناموس", "بی شرف", "بیشرف", "لاشی", "فاحشه", "گوه"
 ];
 const GROUP_FAKE_CLAIM_PATTERNS = [
@@ -74,7 +73,10 @@ const GROUP_FIGHT_PATTERNS = [
   /برو\s*بمیر/u,
   /خفه\s*خون\s*بگیر/u,
   /جمعش?\s*کن/u,
-  /آدم\s*شو/u
+  /آدم\s*شو/u,
+  /(?:مادرت|خواهرت|زنت|همسرت)\s*(?:رو|و)?\s*(?:گایید|میکنم|می‌کنم)/u,
+  /(?:تو|شما)\s+(?:کونی|کونده)\s*(?:هستی|هستید|ی)?/u,
+  /(?:فیک|جعلی|ساختگی)\s+(?:حرومزاده|حرامزاده|کسکش|کصکش|جاکش|دیوث|بیناموس|بیشرف|لاشی|قحبه|جنده)/u
 ];
 const GROUP_RISKY_LINK_HOSTS = new Set([
   "bit.ly", "tinyurl.com", "t.co", "cutt.ly", "rebrand.ly", "shorturl.at",
@@ -999,8 +1001,14 @@ function detectGroupModerationViolation(message) {
 }
 
 function isDirectedGroupAbuse(message, normalizedText) {
-  const repliedUserId = message.reply_to_message?.from?.id;
-  if (repliedUserId && String(repliedUserId) !== String(message.from.id)) return true;
+  const repliedMessage = message.reply_to_message;
+  const repliedUserId = repliedMessage?.from?.id;
+  if (
+    repliedUserId
+      && !repliedMessage.is_automatic_forward
+      && !repliedMessage.sender_chat
+      && String(repliedUserId) !== String(message.from.id)
+  ) return true;
 
   const ownUsername = String(message.from.username || "").toLowerCase();
   const mentions = [...String(message.text || message.caption || "").matchAll(/@([A-Za-z0-9_]{5,32})/g)]
@@ -1285,6 +1293,12 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data.startsWith("proof:block_fake:")) {
+    if (!isAdmin(env, userId)) return;
+    await blockFakeSubmission(env, query, "proof", data.replace("proof:block_fake:", ""));
+    return;
+  }
+
   if (data.startsWith("proof:view:")) {
     if (!isAdmin(env, userId)) return;
     await viewProof(env, query, data.replace("proof:view:", ""));
@@ -1515,6 +1529,12 @@ async function handleCallback(query, env) {
   if (data.startsWith("post:reject_custom:")) {
     if (!isAdmin(env, userId)) return;
     await startCustomPostReject(env, query, data.replace("post:reject_custom:", ""));
+    return;
+  }
+
+  if (data.startsWith("post:block_fake:")) {
+    if (!isAdmin(env, userId)) return;
+    await blockFakeSubmission(env, query, "post", data.replace("post:block_fake:", ""));
     return;
   }
 
@@ -2338,10 +2358,13 @@ async function handleBullProofVideoNote(env, message, state) {
 async function sendProofToAdmin(env, proof, profile, user) {
   const isHotwife = proof.proofType === "hotwife";
   const isBull = proof.proofType === "bull";
-  const controls = keyboard([[
-    { text: isHotwife ? "✅ تایید هاتوایف" : isBull ? "✅ تایید بول" : "✅ تایید کاکولد", callback_data: `proof:approve:${proof.id}` },
-    { text: "❌ رد", callback_data: `proof:reject:${proof.id}` }
-  ]]);
+  const controls = keyboard([
+    [
+      { text: isHotwife ? "✅ تایید هاتوایف" : isBull ? "✅ تایید بول" : "✅ تایید کاکولد", callback_data: `proof:approve:${proof.id}` },
+      { text: "❌ رد", callback_data: `proof:reject:${proof.id}` }
+    ],
+    [{ text: "⛔️ جفنگ و بلاک", callback_data: `proof:block_fake:${proof.id}` }]
+  ]);
 
   await sendMessage(
     env,
@@ -2511,6 +2534,119 @@ async function rejectProofWithReason(env, query, proofId, reason) {
       : "❌ درخواست اثبات کاکولدی تایید نشد.";
   await sendMessage(env, proof.userId, [rejectedTitle, "", `دلیل: ${finalReason}`].join("\n"), keyboard(BACK_TO_MENU));
   await sendMessage(env, chatId, `❌ درخواست رد شد.\nکد: ${proofId}\nدلیل: ${finalReason}`);
+}
+
+async function blockFakeSubmission(env, query, kind, submissionId) {
+  const chatId = String(query.message.chat.id);
+  const isProof = kind === "proof";
+  const key = `${isProof ? "proof" : "post"}:${submissionId}`;
+  const listName = isProof ? "proofs" : "posts";
+  const submission = await getJson(env, key);
+  if (!submission || submission.status !== "pending") {
+    await sendMessage(env, chatId, "این درخواست پیدا نشد یا قبلاً تعیین تکلیف شده است.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  const userId = String(submission.userId);
+  const profile = await getProfile(env, userId);
+  const blockedAt = new Date().toISOString();
+  const cleared = {
+    ...submission,
+    status: "blocked_fake",
+    blockedAt,
+    blockedBy: String(query.from.id),
+    rejectReason: "ارسال اطلاعات یا محتوای فیک",
+    fileId: "",
+    voiceFileId: "",
+    selfiePhotoFileId: "",
+    partnerHijabPhotoFileId: "",
+    partnerNoHijabPhotoFileId: "",
+    proofMedia1FileId: "",
+    proofMedia2FileId: "",
+    proofMedia3FileId: "",
+    bullVideoNoteFileId: ""
+  };
+  await env.BOT_KV.put(key, JSON.stringify(cleared));
+  await updateListItem(env, listName, submissionId, (item) => ({ ...item, ...cleared }));
+  await clearState(env, userId);
+
+  await banUser(env, userId, {
+    username: profile?.username || submission.username || "",
+    name: profile?.name || submission.firstName || "",
+    reason: "ارسال اطلاعات یا محتوای فیک",
+    source: isProof ? "fake_proof" : "fake_post",
+    bannedBy: String(query.from.id),
+    permanent: true
+  });
+
+  await sendMessage(
+    env,
+    userId,
+    [
+      "⛔️ دسترسی شما مسدود شد.",
+      "",
+      "به‌دلیل ارسال اطلاعات یا محتوای فیک، دسترسی شما به ربات برای همیشه بسته می‌شود و از گپ و کانال‌های C Club اخراج می‌شوید."
+    ].join("\n")
+  ).catch(() => {});
+
+  const removal = await banUserFromCClubChats(env, userId);
+  const removalLines = removal.failed.length
+    ? [`⚠️ اخراج ناموفق از: ${removal.failed.join("، ")}`]
+    : ["✅ کاربر از گپ و کانال‌های C Club اخراج شد."];
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "⛔️ درخواست به‌عنوان جفنگ و فیک بسته شد.",
+      `کد: ${submissionId}`,
+      `کاربر: ${profile?.username || submission.username || userId}`,
+      "✅ دسترسی دائمی کاربر به ربات مسدود شد.",
+      ...removalLines
+    ].join("\n"),
+    keyboard(ADMIN_MENU)
+  );
+}
+
+async function banUserFromCClubChats(env, userId) {
+  const targets = [
+    env.DISCUSSION_GROUP_USERNAME || DISCUSSION_GROUP_USERNAME,
+    env.CHANNEL_ID || CHANNEL_USERNAME,
+    env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME
+  ];
+  const failed = [];
+  for (const target of targets) {
+    try {
+      await telegram(env, "banChatMember", {
+        chat_id: target,
+        user_id: userId,
+        revoke_messages: true
+      });
+    } catch {
+      failed.push(String(target));
+    }
+  }
+  return { failed };
+}
+
+async function unbanUserFromCClubChats(env, userId) {
+  const targets = [
+    env.DISCUSSION_GROUP_USERNAME || DISCUSSION_GROUP_USERNAME,
+    env.CHANNEL_ID || CHANNEL_USERNAME,
+    env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME
+  ];
+  const failed = [];
+  for (const target of targets) {
+    try {
+      await telegram(env, "unbanChatMember", {
+        chat_id: target,
+        user_id: userId,
+        only_if_banned: true
+      });
+    } catch {
+      failed.push(String(target));
+    }
+  }
+  return { failed };
 }
 
 async function startCustomProofReject(env, query, proofId) {
@@ -3989,7 +4125,8 @@ async function sendAdminPostPreview(env, post, user) {
       { text: "✅ تایید و زمان‌بندی", callback_data: `post:approve:${post.id}` },
       { text: "❌ رد", callback_data: `post:reject:${post.id}` }
     ],
-    [{ text: "✏️ ویرایش پست", callback_data: `post:edit:${post.id}` }]
+    [{ text: "✏️ ویرایش پست", callback_data: `post:edit:${post.id}` }],
+    [{ text: "⛔️ جفنگ و بلاک", callback_data: `post:block_fake:${post.id}` }]
   ]);
 
   if (post.kind === "photo") {
@@ -4803,7 +4940,7 @@ async function listBannedUsers(env, chatId) {
     const profile = await getProfile(env, ban.userId);
     const name = profile?.name || ban.name || ban.firstName || "-";
     const username = profile?.username || ban.username || "";
-    lines.push(`${name} | ${username || ban.userId} | تا ${formatDateTime(ban.expiresAt)} | ${ban.reason || "-"}`);
+    lines.push(`${name} | ${username || ban.userId} | ${ban.permanent ? "دائمی" : `تا ${formatDateTime(ban.expiresAt)}`} | ${ban.reason || "-"}`);
     rows.push([{ text: `🟢 رفع بن ${name}`, callback_data: `ban:unban:${ban.userId}` }]);
   }
   if (bans.length > 25) lines.push(`... و ${bans.length - 25} مورد دیگر`);
@@ -4815,7 +4952,11 @@ async function unbanUser(env, query, targetUserId) {
   const chatId = String(query.message.chat.id);
   await env.BOT_KV.delete(`ban:${targetUserId}`);
   await env.BOT_KV.delete(`invalid:${targetUserId}`);
-  await sendMessage(env, chatId, `🟢 بن کاربر برداشته شد.\n\nUser ID: ${targetUserId}`, keyboard(ADMIN_MENU));
+  const externalUnban = await unbanUserFromCClubChats(env, targetUserId);
+  const externalStatus = externalUnban.failed.length
+    ? `\n⚠️ رفع اخراج ناموفق از: ${externalUnban.failed.join("، ")}`
+    : "\n✅ امکان عضویت دوباره در گپ و کانال‌ها فعال شد.";
+  await sendMessage(env, chatId, `🟢 بن کاربر برداشته شد.\n\nUser ID: ${targetUserId}${externalStatus}`, keyboard(ADMIN_MENU));
   await sendMessage(env, targetUserId, "🟢 بن شما برداشته شد. می‌توانید دوباره از ربات استفاده کنید.").catch(() => {});
 }
 
@@ -5094,6 +5235,7 @@ async function listPendingProofs(env, chatId) {
       { text: `✅ تایید ${profile?.name || proof.firstName || proof.id}`, callback_data: `proof:approve:${proof.id}` },
       { text: `❌ رد`, callback_data: `proof:reject:${proof.id}` }
     ]);
+    rows.push([{ text: "⛔️ جفنگ و بلاک", callback_data: `proof:block_fake:${proof.id}` }]);
   }
 
   await sendMessage(env, chatId, lines.join("\n"), keyboard(rows));
@@ -6077,6 +6219,7 @@ async function getPendingProofForUser(env, userId) {
 async function getActiveBan(env, userId) {
   const ban = await getJson(env, `ban:${userId}`);
   if (!ban) return null;
+  if (ban.permanent) return ban;
   if (Date.parse(ban.expiresAt || "") <= Date.now()) {
     await env.BOT_KV.delete(`ban:${userId}`);
     return null;
@@ -6087,6 +6230,18 @@ async function getActiveBan(env, userId) {
 async function notifyIfBanned(env, chatId, userId) {
   const ban = await getActiveBan(env, userId);
   if (!ban) return false;
+  if (ban.permanent) {
+    await sendMessage(
+      env,
+      chatId,
+      [
+        "⛔️ دسترسی شما به ربات برای همیشه مسدود شده است.",
+        "",
+        `دلیل: ${ban.reason || "نقض قوانین"}`
+      ].join("\n")
+    );
+    return true;
+  }
   await sendMessage(
     env,
     chatId,
@@ -6160,6 +6315,7 @@ async function recordInvalidSubmission(env, message, reason, expected) {
 
 async function banUser(env, userId, details = {}) {
   const now = new Date();
+  const permanent = Boolean(details.permanent);
   const ban = {
     userId: String(userId),
     username: details.username || "",
@@ -6167,11 +6323,16 @@ async function banUser(env, userId, details = {}) {
     reason: details.reason || "بن کاربر",
     source: details.source || "admin",
     bannedBy: details.bannedBy || "",
+    permanent,
     lastInvalidReason: details.lastInvalidReason || "",
     createdAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + USER_BAN_SECONDS * 1000).toISOString()
+    expiresAt: permanent ? "" : new Date(now.getTime() + USER_BAN_SECONDS * 1000).toISOString()
   };
-  await env.BOT_KV.put(`ban:${userId}`, JSON.stringify(ban), { expirationTtl: USER_BAN_SECONDS });
+  if (permanent) {
+    await env.BOT_KV.put(`ban:${userId}`, JSON.stringify(ban));
+  } else {
+    await env.BOT_KV.put(`ban:${userId}`, JSON.stringify(ban), { expirationTtl: USER_BAN_SECONDS });
+  }
   await putListItem(env, "user_bans", ban);
   return ban;
 }
@@ -6183,7 +6344,10 @@ async function getActiveBans(env) {
     const ban = await getActiveBan(env, ref.userId);
     if (ban) byUser.set(String(ban.userId), ban);
   }
-  return [...byUser.values()].sort((a, b) => Date.parse(b.expiresAt || 0) - Date.parse(a.expiresAt || 0));
+  return [...byUser.values()].sort((a, b) => {
+    if (a.permanent !== b.permanent) return a.permanent ? -1 : 1;
+    return Date.parse(b.expiresAt || 0) - Date.parse(a.expiresAt || 0);
+  });
 }
 
 async function getPreverifiedCuckoldHandles(env) {
