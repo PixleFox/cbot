@@ -1,6 +1,6 @@
 import { strToU8, zipSync } from "fflate";
 
-const CHANNEL_USERNAME = "@cuckzclub";
+const CHANNEL_USERNAME = "@cclubmain";
 const MEDIA_CHANNEL_USERNAME = "@cclubmedia";
 const DISCUSSION_GROUP_USERNAME = "@cuckoldgaps";
 const INSTAGRAM_URL = "https://instagram.com/cucksclub";
@@ -1096,7 +1096,7 @@ function hasSuspiciousGroupLink(message, rawText) {
 
     if (["t.me", "telegram.me"].includes(host)) {
       const allowedTelegramTargets = [
-        "cuckoldgaps", "cclubmedia", "cuckzclub", "cucksclubbot",
+        "cuckoldgaps", "cclubmedia", "cclubmain", "cucksclubbot",
         "+y2fjepdjagkxm2fk", "+-0j3tcozqmm1zjjk"
       ];
       const target = path.split(/[/?#]/)[0];
@@ -4759,7 +4759,7 @@ async function handleSpecialPostButtonText(env, message, state, text) {
     mode: "special_wait_button_url",
     draft: { ...state.draft, buttonText }
   });
-  await sendMessage(env, chatId, "🔗 لینک کامل دکمه را بفرست.\n\nمثال: https://t.me/cuckzclub", specialPostCancelKeyboard());
+  await sendMessage(env, chatId, "🔗 لینک کامل دکمه را بفرست.\n\nمثال: https://t.me/cclubmain", specialPostCancelKeyboard());
 }
 
 async function handleSpecialPostButtonUrl(env, message, state, text) {
@@ -6952,7 +6952,7 @@ async function publishDuePosts(env) {
           post.forwardStatus = "failed";
           post.forwardError = String(forwardError?.message || forwardError);
           post.nextForwardRetryAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-          await safeNotifyAdmin(env, `⚠️ پست ${post.id} در @cclubmedia منتشر شد، اما فوروارد به @cuckzclub ناموفق بود و دوباره تلاش می‌شود.\n${post.forwardError}`);
+          await safeNotifyAdmin(env, `⚠️ پست ${post.id} در @cclubmedia منتشر شد، اما فوروارد به @cclubmain ناموفق بود و دوباره تلاش می‌شود.\n${post.forwardError}`);
         }
       }
 
