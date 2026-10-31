@@ -24,7 +24,7 @@ Create and bind a KV namespace with this exact binding name:
 
 - `BOT_KV`
 
-The bot must be admin in both destination channels if it should publish approved posts.
+The bot must be admin in both destination channels to publish posts. It must also be admin in `@cclubmain` and `@cuckoldgaps` so it can verify channel membership and delete messages from non-members.
 
 Consultation slots should be added by the admin with:
 

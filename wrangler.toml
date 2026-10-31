@@ -16,4 +16,4 @@ binding = "BOT_KV"
 id = "618015e3fa1f46028300b92e16cf5da6"
 
 # Keep BOT_TOKEN only in Cloudflare Secrets, never in GitHub.
-# The bot must be an admin in @cclubmain and @cclubmedia to publish approved posts.
+# The bot must be an admin in @cclubmain, @cclubmedia, and @cuckoldgaps.

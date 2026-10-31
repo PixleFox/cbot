@@ -35,6 +35,19 @@ const COMMENT_MIN_CHARACTERS = 15;
 const GROUP_MUTE_SECONDS = 60 * 60 * 24 * 3;
 const GROUP_REPEAT_WINDOW_MS = 2 * 60 * 1000;
 const GROUP_REPEAT_CACHE_LIMIT = 2000;
+const MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS = 2 * 60;
+const MAIN_CHANNEL_JOIN_WARNING_SECONDS = 30;
+const CHANNEL_MIGRATION_BROADCAST_ID = "cclubmain-2026-10-31";
+const CHANNEL_MIGRATION_MESSAGE = [
+  "📣 آدرس کانال اصلی C Club تغییر کرد",
+  "",
+  "کانال قبلی دیگر در دسترس نیست.",
+  "از این به بعد کانال اصلی ما:",
+  "",
+  "🟢 @cclubmain",
+  "",
+  "برای مشاهده اطلاعیه‌ها و محتوای اصلی، همین حالا عضو کانال جدید شو."
+].join("\n");
 const SERVICE_COSTS = { release: 5, custom_video: 15, gif: 10, custom_image: 5, consultation: 1 };
 const CUSTOM_IMAGE_SCENARIOS = {
   selfie_two_men: "بین دو مرد، در حال گرفتن سلفی",
@@ -84,6 +97,7 @@ const GROUP_RISKY_LINK_HOSTS = new Set([
   "is.gd", "rb.gy", "ow.ly", "buff.ly"
 ]);
 const recentGroupMessages = new Map();
+const recentMainChannelWarnings = new Map();
 
 const QUESTIONS = [
   {
@@ -536,13 +550,16 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(Promise.all([
-      processBroadcastQueue(env),
-      publishDueSpecialPosts(env),
-      sendDueBookingReminders(env),
-      sendDueReleaseReminders(env),
-      publishDuePosts(env)
-    ]));
+    ctx.waitUntil((async () => {
+      const migrationQueued = await ensureChannelMigrationBroadcast(env);
+      await Promise.all([
+        migrationQueued ? Promise.resolve() : processBroadcastQueue(env),
+        publishDueSpecialPosts(env),
+        sendDueBookingReminders(env),
+        sendDueReleaseReminders(env),
+        publishDuePosts(env)
+      ]);
+    })());
   }
 };
 
@@ -560,6 +577,7 @@ async function handleMessage(message, env) {
   if (!isAdmin(env, userId) && await notifyIfBanned(env, chatId, userId)) return;
 
   if (text === "/start") {
+    await rememberKnownBotUser(env, message.from);
     await clearState(env, userId);
     await sendHome(env, chatId);
     return;
@@ -803,6 +821,7 @@ async function handleDiscussionGroupMessage(env, message) {
   }
   if (!message.from?.id || message.from.is_bot) return;
 
+  if (!(await enforceMainChannelMembership(env, message))) return;
   if (await moderateDiscussionGroupMessage(env, message)) return;
 
   const userId = String(message.from.id);
@@ -873,6 +892,110 @@ async function handleDiscussionGroupMessage(env, message) {
   } catch {
     // Award remains valid even if the user has disabled private bot notifications.
   }
+}
+
+async function enforceMainChannelMembership(env, message) {
+  if (!hasUserGeneratedGroupContent(message)) return true;
+  const userId = String(message.from.id);
+  if (isAdmin(env, userId)) return true;
+
+  const cacheKey = `main_channel_member:${userId}`;
+  const cached = await getJson(env, cacheKey);
+  if (cached?.member) return true;
+
+  let member = false;
+  try {
+    const result = await telegram(env, "getChatMember", {
+      chat_id: env.CHANNEL_ID || CHANNEL_USERNAME,
+      user_id: userId
+    });
+    const status = result.result?.status;
+    member = ["creator", "administrator", "member"].includes(status)
+      || (status === "restricted" && result.result?.is_member === true);
+  } catch (error) {
+    const errorKey = "main_channel_membership_check_error";
+    if (!(await env.BOT_KV.get(errorKey))) {
+      await env.BOT_KV.put(errorKey, "1", { expirationTtl: 60 * 60 });
+      await safeNotifyAdmin(
+        env,
+        `⚠️ بررسی عضویت ${CHANNEL_USERNAME} انجام نشد. مطمئن شو ربات در کانال جدید ادمین است.\n${String(error?.message || error)}`
+      );
+    }
+    return true;
+  }
+
+  if (!member && await isTelegramChatAdmin(env, message.chat.id, userId)) {
+    await env.BOT_KV.put(
+      cacheKey,
+      JSON.stringify({ member: true, adminBypass: true, checkedAt: new Date().toISOString() }),
+      { expirationTtl: MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS }
+    );
+    return true;
+  }
+  if (member) {
+    await env.BOT_KV.put(
+      cacheKey,
+      JSON.stringify({ member: true, checkedAt: new Date().toISOString() }),
+      { expirationTtl: MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS }
+    );
+    return true;
+  }
+
+  await removeNonMemberGroupMessage(env, message);
+  return false;
+}
+
+function hasUserGeneratedGroupContent(message) {
+  return Boolean(
+    message.text
+      || message.caption
+      || message.photo?.length
+      || message.video
+      || message.animation
+      || message.document
+      || message.audio
+      || message.voice
+      || message.video_note
+      || message.sticker
+      || message.poll
+      || message.contact
+      || message.location
+  );
+}
+
+async function removeNonMemberGroupMessage(env, message) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  try {
+    await telegram(env, "deleteMessage", { chat_id: chatId, message_id: message.message_id });
+  } catch (error) {
+    await safeNotifyAdmin(env, `⚠️ حذف پیام کاربر غیرعضو ناموفق بود.\n${String(error?.message || error)}`);
+  }
+
+  const warningKey = `${chatId}:${userId}`;
+  const now = Date.now();
+  const lastWarningAt = Number(recentMainChannelWarnings.get(warningKey) || 0);
+  if (now - lastWarningAt < MAIN_CHANNEL_JOIN_WARNING_SECONDS * 1000) return;
+  recentMainChannelWarnings.set(warningKey, now);
+  if (recentMainChannelWarnings.size > GROUP_REPEAT_CACHE_LIMIT) {
+    for (const [key, createdAt] of recentMainChannelWarnings) {
+      if (now - createdAt > MAIN_CHANNEL_JOIN_WARNING_SECONDS * 1000) recentMainChannelWarnings.delete(key);
+      if (recentMainChannelWarnings.size <= GROUP_REPEAT_CACHE_LIMIT) break;
+    }
+  }
+  const userLabel = message.from.username
+    ? `@${message.from.username}`
+    : cleanText([message.from.first_name, message.from.last_name].filter(Boolean).join(" ")) || userId;
+  const isolatedUserLabel = `\u2068${userLabel}\u2069`;
+  await sendMessage(
+    env,
+    chatId,
+    [
+      `\u200F🔒 کاربر ${isolatedUserLabel}، برای ارسال پیام در گپ ابتدا عضو کانال اصلی شو.`,
+      "\u200Fپس از عضویت، دوباره پیامت را ارسال کن."
+    ].join("\n"),
+    keyboard([[{ text: "🟢 عضویت در کانال اصلی", url: "https://t.me/cclubmain" }]])
+  );
 }
 
 async function moderateDiscussionGroupMessage(env, message) {
@@ -5565,6 +5688,103 @@ async function deliverBroadcast(env, chatId, target, body) {
   );
 }
 
+async function ensureChannelMigrationBroadcast(env) {
+  const markerKey = `system_broadcast:${CHANNEL_MIGRATION_BROADCAST_ID}`;
+  if (await env.BOT_KV.get(markerKey)) return false;
+
+  const recipients = await getAllKnownBotUserIds(env);
+  if (!recipients.length) {
+    await env.BOT_KV.put(markerKey, JSON.stringify({ status: "complete", total: 0, createdAt: new Date().toISOString() }));
+    return false;
+  }
+
+  const queue = (await getJson(env, "broadcast_queue")) || [];
+  const jobId = `system:${CHANNEL_MIGRATION_BROADCAST_ID}`;
+  if (!queue.some((job) => job.id === jobId)) {
+    queue.unshift({
+      id: jobId,
+      adminChatId: String(env.ADMIN_CHAT_ID),
+      body: CHANNEL_MIGRATION_MESSAGE,
+      recipients,
+      sent: 0,
+      failed: 0,
+      total: recipients.length,
+      notifyAdminOnComplete: true,
+      createdAt: new Date().toISOString()
+    });
+    await env.BOT_KV.put("broadcast_queue", JSON.stringify(queue.slice(0, 10)));
+  }
+  await env.BOT_KV.put(markerKey, JSON.stringify({
+    status: "queued",
+    total: recipients.length,
+    createdAt: new Date().toISOString()
+  }));
+  await safeNotifyAdmin(env, `📣 اعلام تغییر کانال برای ${recipients.length} کاربر وارد صف ارسال شد.`);
+  return true;
+}
+
+async function getAllKnownBotUserIds(env) {
+  const userIds = new Set();
+  const addUserId = (value) => {
+    const userId = String(value || "");
+    if (/^\d+$/.test(userId)) userIds.add(userId);
+  };
+
+  const knownUsers = await getList(env, "known_users");
+  for (const user of knownUsers) addUserId(user.userId);
+  await collectUserIdsFromKvPrefix(env, "profile:", addUserId);
+  await collectUserIdsFromKvPrefix(env, "known_user:", addUserId);
+  await collectUserIdsFromKvPrefix(env, "state:", addUserId);
+  await collectUserIdsFromKvPrefix(env, "ban:", addUserId);
+
+  const listNames = [
+    "profiles",
+    "proofs",
+    "posts",
+    "bookings",
+    "release_requests",
+    "support_tickets",
+    "test_results",
+    "custom_image_requests",
+    "user_bans"
+  ];
+  for (const listName of listNames) {
+    const items = await getList(env, listName);
+    for (const item of items) addUserId(item.userId);
+  }
+  return [...userIds];
+}
+
+async function collectUserIdsFromKvPrefix(env, prefix, addUserId) {
+  let cursor;
+  for (let page = 0; page < 10; page += 1) {
+    const result = await env.BOT_KV.list({ prefix, limit: 1000, ...(cursor ? { cursor } : {}) });
+    for (const key of result.keys || []) addUserId(String(key.name || "").slice(prefix.length));
+    if (result.list_complete) break;
+    cursor = result.cursor;
+    if (!cursor) break;
+  }
+}
+
+async function rememberKnownBotUser(env, user) {
+  if (!user?.id) return;
+  const userId = String(user.id);
+  const markerKey = `known_user:${userId}`;
+  if (await env.BOT_KV.get(markerKey)) return;
+
+  const users = await getList(env, "known_users");
+  const record = {
+    userId,
+    username: user.username || "",
+    firstName: user.first_name || "",
+    lastName: user.last_name || "",
+    firstSeenAt: new Date().toISOString()
+  };
+  const updated = [...users.filter((item) => String(item.userId) !== userId), record].slice(-5000);
+  await env.BOT_KV.put("list:known_users", JSON.stringify(updated));
+  await env.BOT_KV.put(markerKey, "1");
+}
+
 async function getBroadcastAudience(env, target) {
   const snapshots = await getProfileSnapshots(env);
   if (target === "all") return snapshots.map((profile) => String(profile.userId));
@@ -5660,6 +5880,18 @@ async function processBroadcastQueue(env) {
     queue[0] = job;
   } else {
     queue.shift();
+    if (job.id === `system:${CHANNEL_MIGRATION_BROADCAST_ID}`) {
+      await env.BOT_KV.put(
+        `system_broadcast:${CHANNEL_MIGRATION_BROADCAST_ID}`,
+        JSON.stringify({
+          status: "complete",
+          total: job.total,
+          sent: job.sent,
+          failed: job.failed,
+          completedAt: new Date().toISOString()
+        })
+      );
+    }
     if (job.notifyAdminOnComplete !== false) {
       await sendMessage(
         env,
