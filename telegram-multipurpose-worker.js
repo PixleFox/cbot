@@ -3,7 +3,6 @@ import { strToU8, zipSync } from "fflate";
 const CHANNEL_USERNAME = "@cclubmain";
 const MEDIA_CHANNEL_USERNAME = "@cclubmedia";
 const DISCUSSION_GROUP_USERNAME = "@cuckoldgaps";
-const INSTAGRAM_URL = "https://instagram.com/cucksclub";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
 const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-v2.png";
 const BOT_SHORT_DESCRIPTION = "C Club | تست غیرت، ارسال محتوا، نوبت و پشتیبانی";
@@ -16,6 +15,8 @@ const QUESTION_COUNT = 18;
 const MAX_TEXT_LENGTH = 2800;
 const MAX_PHOTO_CAPTION_LENGTH = 900;
 const MAX_VIDEO_CAPTION_LENGTH = 900;
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_CAPTION_LIMIT = 1024;
 const POST_COOLDOWN_SECONDS = 90;
 const BOOKING_COOLDOWN_SECONDS = 60;
 const INVALID_SUBMISSION_LIMIT = 3;
@@ -5824,11 +5825,52 @@ async function sendProofMedia(env, chatId, kind, fileId, caption, extra = {}) {
 
 function buildMediaCaption(caption, kind = "photo") {
   const tag = kind === "video" ? "#فیلم_ارسالی" : "#عکس_ارسالی";
-  return ["C CLUB", "", tag, cleanText(caption), MEDIA_CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`, "", "📩 ارسال محتوا در کانال:", "@cucksclubbot"].join("\n");
+  return appendCClubPostFooter(["C CLUB", "", tag, cleanText(caption)].join("\n"), TELEGRAM_CAPTION_LIMIT);
 }
 
 function buildConfessionText(text) {
-  return ["#اعترافات_شما", cleanText(text), CHANNEL_USERNAME, `instagram: ${INSTAGRAM_URL}`, "", "📩 ارسال محتوا در کانال:", "@cucksclubbot"].join("\n");
+  return appendCClubPostFooter(["#اعترافات_شما", cleanText(text)].join("\n"), TELEGRAM_MESSAGE_LIMIT);
+}
+
+function appendCClubPostFooter(value, maxLength = TELEGRAM_MESSAGE_LIMIT) {
+  const footer = [
+    "━━━━━━━━━━━━━━",
+    "📣 کانال اصلی:",
+    "@cclubmain",
+    "",
+    "🎬 کانال مدیا:",
+    "@cclubmedia",
+    "",
+    "🤖 ربات ثبت‌نام:",
+    "@cucksclubbot"
+  ].join("\n");
+  const lines = String(value || "").trim().split("\n");
+  const footerStart = lines.findIndex((line, index) =>
+    index >= Math.max(0, lines.length - 14)
+      && (line.includes("کانال اصلی:") || line.trim() === "━━━━━━━━━━━━━━")
+  );
+  if (footerStart >= 0) lines.splice(footerStart);
+
+  const legacyStart = lines.findIndex((line, index) => {
+    if (index < Math.max(0, lines.length - 8)) return false;
+    const current = line.trim().toLowerCase();
+    const next = String(lines[index + 1] || "").trim().toLowerCase();
+    return ["@cuckzclub", "@cclubmain", "@cclubmedia"].includes(current) && next.startsWith("instagram:");
+  });
+  if (legacyStart >= 0) lines.splice(legacyStart);
+
+  const legacyBotStart = lines.findIndex((line, index) =>
+    index >= Math.max(0, lines.length - 4) && line.includes("ارسال محتوا در کانال")
+  );
+  if (legacyBotStart >= 0) lines.splice(legacyBotStart);
+
+  let body = lines.join("\n").trim();
+  const suffix = `${body ? "\n\n" : ""}${footer}`;
+  const availableBodyLength = Math.max(0, maxLength - suffix.length);
+  if (body.length > availableBodyLength) {
+    body = `${body.slice(0, Math.max(0, availableBodyLength - 1)).trimEnd()}…`;
+  }
+  return `${body}${body ? "\n\n" : ""}${footer}`;
 }
 
 function postTypeLabel(kind) {
@@ -6847,9 +6889,9 @@ async function sendSpecialPostMessage(env, chatId, post, includeCancel = false) 
   const extra = rows.length ? keyboard(rows) : {};
 
   if (post.kind === "photo") {
-    return sendPhoto(env, chatId, post.fileId, post.text, extra);
+    return sendPhoto(env, chatId, post.fileId, appendCClubPostFooter(post.text, TELEGRAM_CAPTION_LIMIT), extra);
   }
-  return sendMessage(env, chatId, post.text, extra);
+  return sendMessage(env, chatId, appendCClubPostFooter(post.text, TELEGRAM_MESSAGE_LIMIT), extra);
 }
 
 async function publishDueSpecialPosts(env) {
@@ -6927,9 +6969,10 @@ async function publishDuePosts(env) {
       ? (env.CHANNEL_ID || CHANNEL_USERNAME)
       : (env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME);
     try {
-      const publishText = post.kind === "confession"
-        ? post.finalText
-        : String(post.finalText || "").replaceAll(CHANNEL_USERNAME, MEDIA_CHANNEL_USERNAME);
+      const publishText = appendCClubPostFooter(
+        post.finalText,
+        post.kind === "confession" ? TELEGRAM_MESSAGE_LIMIT : TELEGRAM_CAPTION_LIMIT
+      );
       let publishedMessage;
       if (post.kind === "photo") {
         publishedMessage = await sendPhoto(env, targetChannel, post.fileId, publishText);
