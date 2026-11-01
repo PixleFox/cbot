@@ -19,6 +19,7 @@ Set these Worker variables/secrets in Cloudflare:
 - `ADMIN_CHAT_ID`
 - `CHANNEL_ID` is set as `@cclubmain` for confessions and special posts.
 - `MEDIA_CHANNEL_ID` is set as `@cclubmedia` for approved user photo/video posts.
+- Every new post published in `@cclubmedia`, including manual channel posts, is automatically forwarded to `@cclubmain` through Telegram `channel_post` updates.
 
 Create and bind a KV namespace with this exact binding name:
 
@@ -45,7 +46,7 @@ Cloudflare scheduled triggers run every 5 minutes and send reminders when a book
 After deployment, set the Telegram webhook:
 
 ```text
-https://api.telegram.org/botBOT_TOKEN/setWebhook?url=https://telegrambot.alirezaeslamibidgoli.workers.dev
+https://api.telegram.org/botBOT_TOKEN/setWebhook?url=https://telegrambot.alirezaeslamibidgoli.workers.dev&allowed_updates=%5B%22message%22%2C%22callback_query%22%2C%22channel_post%22%5D
 ```
 
 Then open the bot and send:

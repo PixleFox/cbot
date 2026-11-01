@@ -542,6 +542,7 @@ export default {
     try {
       if (update.callback_query) await handleCallback(update.callback_query, env);
       if (update.message) await handleMessage(update.message, env);
+      if (update.channel_post) await handleMediaChannelPost(update.channel_post, env);
     } catch (error) {
       await safeNotifyAdmin(env, `⚠️ Bot error\n\n${String(error?.stack || error)}`);
     }
@@ -562,6 +563,26 @@ export default {
     })());
   }
 };
+
+async function handleMediaChannelPost(message, env) {
+  if (!isMediaChannel(message.chat, env) || !message.message_id) return;
+
+  try {
+    await forwardMediaChannelMessageOnce(env, message.chat.id, message.message_id);
+  } catch (error) {
+    await safeNotifyAdmin(
+      env,
+      `⚠️ فوروارد خودکار یک پست از @cclubmedia به @cclubmain ناموفق بود.\n\nشناسه پیام: ${message.message_id}\n${String(error?.message || error)}`
+    );
+  }
+}
+
+function isMediaChannel(chat, env) {
+  if (!chat || chat.type !== "channel") return false;
+  const configured = String(env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME).trim().toLowerCase();
+  const username = chat.username ? `@${String(chat.username).toLowerCase()}` : "";
+  return String(chat.id) === configured || username === configured;
+}
 
 async function handleMessage(message, env) {
   if (["group", "supergroup"].includes(message.chat?.type)) {
@@ -7325,12 +7346,31 @@ async function notifyPostOwner(env, post, text) {
 
 async function forwardMediaPost(env, post) {
   if (!post.mediaMessageId) throw new Error("شناسه پیام منتشرشده پیدا نشد.");
-  return forwardMessage(
+  return forwardMediaChannelMessageOnce(
     env,
-    env.CHANNEL_ID || CHANNEL_USERNAME,
     env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME,
     post.mediaMessageId
   );
+}
+
+async function forwardMediaChannelMessageOnce(env, fromChatId, messageId) {
+  const key = `media_forward:${messageId}`;
+  if (await env.BOT_KV.get(key)) return { duplicate: true };
+
+  await env.BOT_KV.put(key, "processing", { expirationTtl: 7 * 24 * 60 * 60 });
+  try {
+    const result = await forwardMessage(
+      env,
+      env.CHANNEL_ID || CHANNEL_USERNAME,
+      fromChatId,
+      messageId
+    );
+    await env.BOT_KV.put(key, "forwarded", { expirationTtl: 7 * 24 * 60 * 60 });
+    return result;
+  } catch (error) {
+    await env.BOT_KV.delete(key);
+    throw error;
+  }
 }
 
 async function retryPendingMediaForwards(env, postRefs, now = Date.now()) {
