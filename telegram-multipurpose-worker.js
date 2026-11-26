@@ -2908,6 +2908,7 @@ async function approveProof(env, query, proofId) {
       profile.cuckoldVerifiedAt = proof.reviewedAt;
     }
     await env.BOT_KV.put(`profile:${proof.userId}`, JSON.stringify(profile));
+    await upsertProfileSnapshot(env, profile);
   }
 
   let pointResult = null;
@@ -3339,7 +3340,7 @@ async function finishStatelessTest(env, query, mode, sessionId, issuedAt, encode
       lastTestResult: testResult
     };
     await env.BOT_KV.put(`profile:${userId}`, JSON.stringify(updatedProfile));
-    await putListItem(env, "test_results", testResult);
+    await upsertProfileSnapshot(env, updatedProfile);
   }
 
   const savedType = getTestType(savedResult.percent);
@@ -4951,8 +4952,9 @@ async function sendQuickAdminStats(env, chatId) {
     getPreverifiedCuckoldHandles(env)
   ]);
 
-  const profiles = uniqueListItems(profileRefs, "userId").filter((profile) => profile.registered);
-  const proofs = uniqueListItems(proofRefs, "id");
+  const profileRefresh = await refreshProfileSnapshotsBatch(env, profileRefs);
+  const profiles = uniqueListItems(profileRefresh.profiles, "userId").filter((profile) => profile.registered);
+  const proofs = await repairPendingProofSnapshots(env, proofRefs);
   const bookings = uniqueListItems(bookingRefs, "id");
   const releases = uniqueListItems(releaseRefs, "id");
   const posts = uniqueListItems(postRefs, "id");
@@ -4988,6 +4990,14 @@ async function sendQuickAdminStats(env, chatId) {
   };
   const postCount = (status) => posts.filter((post) => post.status === status).length;
   const proofCount = (status) => proofs.filter((proof) => proof.status === status).length;
+  const testHistoryIds = new Set(
+    profiles.flatMap((profile) => (Array.isArray(profile.testHistory) ? profile.testHistory : []).map((test) => test.id))
+  );
+  const profileTestCount = profiles.reduce((sum, profile) => sum + Number(profile.testCount || 0), 0);
+  const legacyTestCount = tests.filter((test) => !testHistoryIds.has(test.id)).length;
+  const testCountText = profileRefresh.complete
+    ? String(profileTestCount + legacyTestCount)
+    : `در حال محاسبه دقیق (${profileRefresh.processed}/${profileRefresh.total} پروفایل)`;
 
   await sendMessage(
     env,
@@ -5025,12 +5035,64 @@ async function sendQuickAdminStats(env, chatId) {
       `تیکت پشتیبانی: ${supportTickets.length}`,
       `پشتیبانی پاسخ‌نداده: ${supportTickets.filter((ticket) => ticket.status !== "answered").length}`,
       "",
-      `🧪 نتایج ثبت‌شده تست غیرت: ${tests.length}`,
+      `🧪 نتایج ثبت‌شده تست غیرت: ${testCountText}`,
       "",
       `🕐 بروزرسانی: ${formatDateTime(new Date().toISOString())}`
     ].join("\n"),
-    keyboard(ADMIN_MENU)
+    keyboard(profileRefresh.complete
+      ? ADMIN_MENU
+      : [[{ text: "🔄 ادامه بروزرسانی آمار", callback_data: "admin:stats" }], ...ADMIN_MENU])
   );
+}
+
+async function refreshProfileSnapshotsBatch(env, profileRefs, batchSize = 15) {
+  const snapshots = uniqueListItems(profileRefs, "userId");
+  const total = snapshots.length;
+  const progressKey = "stats:profile_snapshot_refresh:v2";
+  const progress = (await getJson(env, progressKey)) || {};
+  let cursor = progress.total === total ? Number(progress.cursor || 0) : 0;
+
+  if (!total || cursor >= total) {
+    return { profiles: snapshots, processed: total, total, complete: true };
+  }
+
+  const batch = snapshots.slice(cursor, cursor + batchSize);
+  const latestProfiles = await Promise.all(
+    batch.map((snapshot) => getProfile(env, snapshot.userId))
+  );
+  const latestByUser = new Map(
+    latestProfiles.filter(Boolean).map((profile) => [String(profile.userId), profile])
+  );
+  const refreshed = snapshots.map((snapshot) => latestByUser.get(String(snapshot.userId)) || snapshot);
+  cursor = Math.min(total, cursor + batch.length);
+
+  await env.BOT_KV.put("list:profiles", JSON.stringify(refreshed.slice(-500)));
+  await env.BOT_KV.put(progressKey, JSON.stringify({ cursor, total, updatedAt: new Date().toISOString() }));
+  return { profiles: refreshed, processed: cursor, total, complete: cursor >= total };
+}
+
+async function repairPendingProofSnapshots(env, proofRefs, batchSize = 8) {
+  const snapshots = uniqueListItems(proofRefs, "id");
+  const candidates = snapshots.filter((proof) => proof.status === "pending").slice(0, batchSize);
+  if (!candidates.length) return snapshots;
+
+  const latestProofs = await Promise.all(candidates.map((proof) => getJson(env, `proof:${proof.id}`)));
+  const latestById = new Map();
+  candidates.forEach((proof, index) => latestById.set(String(proof.id), latestProofs[index] || null));
+  let changed = false;
+  const repaired = snapshots.flatMap((snapshot) => {
+    if (!latestById.has(String(snapshot.id))) return [snapshot];
+    const latest = latestById.get(String(snapshot.id));
+    if (!latest) {
+      changed = true;
+      return [];
+    }
+    if (latest.status !== snapshot.status) changed = true;
+    return [latest];
+  });
+
+  if (changed) await env.BOT_KV.put("list:proofs", JSON.stringify(repaired.slice(-500)));
+  return repaired;
 }
 
 function uniqueListItems(items, keyName) {
@@ -6895,6 +6957,14 @@ async function putListItem(env, listName, item) {
   list.push(item);
   const trimmed = list.slice(-500);
   await env.BOT_KV.put(`list:${listName}`, JSON.stringify(trimmed));
+}
+
+async function upsertProfileSnapshot(env, profile) {
+  const profiles = uniqueListItems(await getList(env, "profiles"), "userId");
+  const userId = String(profile.userId);
+  const updated = profiles.filter((item) => String(item.userId) !== userId);
+  updated.push(profile);
+  await env.BOT_KV.put("list:profiles", JSON.stringify(updated.slice(-500)));
 }
 
 async function updateListItem(env, listName, itemId, updater) {
