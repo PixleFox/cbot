@@ -3339,6 +3339,7 @@ async function finishStatelessTest(env, query, mode, sessionId, issuedAt, encode
       lastTestResult: testResult
     };
     await env.BOT_KV.put(`profile:${userId}`, JSON.stringify(updatedProfile));
+    await putListItem(env, "test_results", testResult);
   }
 
   const savedType = getTestType(savedResult.percent);
@@ -4916,54 +4917,129 @@ async function handleAdminCallback(env, query, data) {
   }
 
   if (data === "admin:stats") {
-    const bookings = await getList(env, "bookings");
-    const posts = await getList(env, "posts");
-    const scheduledPosts = posts.filter((post) => post.status === "scheduled");
-    const publishedPosts = posts.filter((post) => post.status === "published");
-    const rejectedPosts = posts.filter((post) => post.status === "rejected");
-    const canceledPosts = posts.filter((post) => post.status === "canceled");
-    const tests = await getList(env, "test_results");
-    const profiles = await getProfiles(env);
-    const optimizedTestCount = profiles.reduce((sum, profile) => sum + Number(profile.testCount || 0), 0);
-    const proofs = await getProofs(env);
-    const supportTickets = await getSupportTickets(env);
-    const openSupportTickets = supportTickets.filter((ticket) => ticket.status !== "answered");
-    const pendingProofs = proofs.filter((proof) => proof.status === "pending");
-    const releases = await getList(env, "release_requests");
-    const verified = profiles.filter((profile) => profile.cuckoldVerified);
-    const verifiedHotwives = profiles.filter((profile) => profile.hotwifeVerified);
-    const verifiedBulls = profiles.filter((profile) => profile.bullVerified);
-    const preverifiedHandles = await getPreverifiedCuckoldHandles(env);
-    const specialPosts = await getSpecialPosts(env);
-    const activeSpecialPosts = specialPosts.filter((post) => post.status === "scheduled");
-    await sendMessage(
-      env,
-      chatId,
-      [
-        `📦 آمار سریع`,
-        "",
-        `ثبت‌نامی‌ها: ${profiles.length}`,
-        `کاکولدهای تایید شده: ${verified.length}`,
-        `یوزرنیم‌های تایید دستی: ${preverifiedHandles.length}`,
-        `هاتوایف‌های تایید شده: ${verifiedHotwives.length}`,
-        `بول‌های تایید شده: ${verifiedBulls.length}`,
-        `درخواست‌های اثبات: ${proofs.length}`,
-        `اثبات‌های در انتظار: ${pendingProofs.length}`,
-        `نوبت‌های مشاوره: ${bookings.length}`,
-        `درخواست‌های تخلیه: ${releases.length}`,
-        `پست‌ها: ${posts.length}`,
-        `پست‌های زمان‌بندی‌شده: ${scheduledPosts.length}`,
-        `پست‌های منتشر شده: ${publishedPosts.length}`,
-        `پست‌های رد شده: ${rejectedPosts.length}`,
-        `پست‌های لغو شده: ${canceledPosts.length}`,
-        `پست‌های ویژه فعال: ${activeSpecialPosts.length}`,
-        `درخواست‌های پشتیبانی: ${supportTickets.length}`,
-        `پشتیبانی پاسخ نداده: ${openSupportTickets.length}`,
-        `نتایج تست غیرت: ${tests.length + optimizedTestCount}`
-      ].join("\n"),
-      keyboard(ADMIN_MENU)
-    );
+    await sendQuickAdminStats(env, chatId);
+    return;
   }
+}
+
+async function sendQuickAdminStats(env, chatId) {
+  const [
+    profileRefs,
+    proofRefs,
+    bookingRefs,
+    releaseRefs,
+    postRefs,
+    testRefs,
+    supportRefs,
+    specialPostRefs,
+    customImageRefs,
+    directoryRefs,
+    slotRefs,
+    preverifiedHandles
+  ] = await Promise.all([
+    getList(env, "profiles"),
+    getList(env, "proofs"),
+    getList(env, "bookings"),
+    getList(env, "release_requests"),
+    getList(env, "posts"),
+    getList(env, "test_results"),
+    getList(env, "support_tickets"),
+    getList(env, "special_posts"),
+    getList(env, "custom_image_requests"),
+    getList(env, "directory_profiles"),
+    getList(env, "slots"),
+    getPreverifiedCuckoldHandles(env)
+  ]);
+
+  const profiles = uniqueListItems(profileRefs, "userId").filter((profile) => profile.registered);
+  const proofs = uniqueListItems(proofRefs, "id");
+  const bookings = uniqueListItems(bookingRefs, "id");
+  const releases = uniqueListItems(releaseRefs, "id");
+  const posts = uniqueListItems(postRefs, "id");
+  const tests = uniqueListItems(testRefs, "id");
+  const supportTickets = uniqueListItems(supportRefs, "id");
+  const specialPosts = uniqueListItems(specialPostRefs, "id");
+  const customImages = uniqueListItems(customImageRefs, "id");
+  const directoryProfiles = uniqueListItems(directoryRefs, "userId");
+  const slots = uniqueListItems(slotRefs, "id");
+
+  const approvedProofUsers = (proofType) => new Set(
+    proofs
+      .filter((proof) => proof.status === "approved"
+        && (proof.proofType === proofType || (!proof.proofType && proofType === "cuckold")))
+      .map((proof) => String(proof.userId))
+  );
+  const verifiedCuckolds = approvedProofUsers("cuckold");
+  const verifiedHotwives = approvedProofUsers("hotwife");
+  const verifiedBulls = approvedProofUsers("bull");
+  const preverifiedSet = new Set(preverifiedHandles.map(normalizeTelegramHandle));
+  for (const profile of profiles) {
+    const userId = String(profile.userId);
+    if (profile.cuckoldVerified || preverifiedSet.has(normalizeTelegramHandle(profile.username))) verifiedCuckolds.add(userId);
+    if (profile.hotwifeVerified) verifiedHotwives.add(userId);
+    if (profile.bullVerified) verifiedBulls.add(userId);
+  }
+
+  const typeCounts = {
+    cuckold: profiles.filter((profile) => profile.type === "cuckold").length,
+    bull: profiles.filter((profile) => profile.type === "bull").length,
+    hotwife: profiles.filter((profile) => profile.type === "hotwife").length,
+    unknown: profiles.filter((profile) => profile.type === "unknown").length
+  };
+  const postCount = (status) => posts.filter((post) => post.status === status).length;
+  const proofCount = (status) => proofs.filter((proof) => proof.status === status).length;
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "📦 آمار سریع C Club",
+      "━━━━━━━━━━━━━━",
+      "",
+      "👥 کاربران",
+      `کل ثبت‌نامی‌ها: ${profiles.length}`,
+      `کاکولد: ${typeCounts.cuckold} | بول: ${typeCounts.bull}`,
+      `هاتوایف: ${typeCounts.hotwife} | نامشخص: ${typeCounts.unknown}`,
+      `✅ کاکولد تأییدشده: ${verifiedCuckolds.size}`,
+      `✅ بول تأییدشده: ${verifiedBulls.size}`,
+      `✅ هاتوایف تأییدشده: ${verifiedHotwives.size}`,
+      `🟢 کارت معرفی فعال: ${directoryProfiles.filter((card) => card.status === "active").length}`,
+      "",
+      "🧾 اثبات‌ها",
+      `کل درخواست‌ها: ${proofs.length}`,
+      `در انتظار: ${proofCount("pending")} | تأیید: ${proofCount("approved")}`,
+      `ردشده: ${proofCount("rejected")} | جفنگ/بلاک: ${proofCount("blocked_fake")}`,
+      "",
+      "🎬 محتوا",
+      `کل پست‌ها: ${posts.length}`,
+      `در انتظار بررسی: ${postCount("pending")}`,
+      `زمان‌بندی‌شده: ${postCount("scheduled")} | منتشرشده: ${postCount("published")}`,
+      `ردشده: ${postCount("rejected")} | ناموفق: ${postCount("publish_failed")}`,
+      `لغوشده: ${postCount("canceled")} | ویژه فعال: ${specialPosts.filter((post) => post.status === "scheduled").length}`,
+      "",
+      "📅 خدمات و ارتباط",
+      `نوبت‌های مشاوره: ${bookings.length}`,
+      `درخواست‌های تخلیه: ${releases.length}`,
+      `زمان‌های خالی فعال: ${slots.filter((slot) => slot.status === "open").length}`,
+      `درخواست ساخت عکس: ${customImages.length}`,
+      `تیکت پشتیبانی: ${supportTickets.length}`,
+      `پشتیبانی پاسخ‌نداده: ${supportTickets.filter((ticket) => ticket.status !== "answered").length}`,
+      "",
+      `🧪 نتایج ثبت‌شده تست غیرت: ${tests.length}`,
+      "",
+      `🕐 بروزرسانی: ${formatDateTime(new Date().toISOString())}`
+    ].join("\n"),
+    keyboard(ADMIN_MENU)
+  );
+}
+
+function uniqueListItems(items, keyName) {
+  const byKey = new Map();
+  for (const item of items || []) {
+    const key = String(item?.[keyName] || "");
+    if (key) byKey.set(key, item);
+  }
+  return [...byKey.values()];
 }
 
 async function finishAddSlot(env, message, text) {
