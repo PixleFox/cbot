@@ -1078,7 +1078,13 @@ async function enforceMainChannelMembership(env, message) {
         `⚠️ بررسی عضویت ${CHANNEL_USERNAME} انجام نشد. مطمئن شو ربات در کانال جدید ادمین است.\n${String(error?.message || error)}`
       );
     }
-    return true;
+    try {
+      if (await isTelegramChatAdmin(env, message.chat.id, userId)) return true;
+    } catch {
+      // Keep mandatory membership closed when Telegram cannot verify either status.
+    }
+    await removeNonMemberGroupMessage(env, message);
+    return false;
   }
 
   if (!member && await isTelegramChatAdmin(env, message.chat.id, userId)) {
