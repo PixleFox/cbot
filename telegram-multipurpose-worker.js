@@ -198,6 +198,8 @@ const GROUP_RISKY_LINK_HOSTS = new Set([
 ]);
 const recentGroupMessages = new Map();
 const recentMainChannelWarnings = new Map();
+const mainChannelMembershipCache = new Map();
+let mainChannelMembershipErrorNoticeAt = 0;
 
 const QUESTIONS = [
   {
@@ -986,33 +988,16 @@ async function handleDiscussionGroupMessage(env, message) {
   const profile = await getProfile(env, userId);
   if (!isVerifiedPointsProfile(profile)) return;
 
-  const postRewardKey = `comment_post_reward:${chatId}:${threadId}:${userId}`;
-  if (await env.BOT_KV.get(postRewardKey)) return;
-
   const commentHash = await sha256(comment.toLocaleLowerCase("fa-IR"));
-  const duplicateKey = `comment_text_reward:${userId}:${commentHash}`;
-  if (await env.BOT_KV.get(duplicateKey)) return;
-
   const dateKey = tehranDateKey(new Date().toISOString());
-  const dailyKey = `comment_daily_reward:${dateKey}:${userId}`;
-  const dailyCount = Number(await env.BOT_KV.get(dailyKey) || 0);
-  if (dailyCount >= COMMENT_DAILY_POINT_LIMIT) return;
-
-  const pointResult = await changePoints(
-    env,
-    userId,
-    COMMENT_POINT_REWARD,
-    `earn:comment:${chatId}:${message.message_id}`,
-    `کامنت معتبر زیر پست رسانه‌ای ${threadId}`
-  );
+  const pointResult = await awardCommentPoint(env, profile, {
+    chatId,
+    threadId,
+    messageId: message.message_id,
+    commentHash,
+    dateKey
+  });
   if (!pointResult.ok || pointResult.duplicate) return;
-
-  const nextDailyCount = dailyCount + 1;
-  await Promise.all([
-    env.BOT_KV.put(postRewardKey, String(message.message_id), { expirationTtl: 60 * 60 * 24 * 120 }),
-    env.BOT_KV.put(duplicateKey, "1", { expirationTtl: 60 * 60 * 24 }),
-    env.BOT_KV.put(dailyKey, String(nextDailyCount), { expirationTtl: 60 * 60 * 48 })
-  ]);
 
   try {
     await sendMessage(
@@ -1023,12 +1008,56 @@ async function handleDiscussionGroupMessage(env, message) {
         "",
         `⭐ امتیاز این کامنت: +${COMMENT_POINT_REWARD}`,
         `⭐ موجودی جدید: ${pointResult.balance}`,
-        `سهم امروز: ${nextDailyCount} از ${COMMENT_DAILY_POINT_LIMIT}`
+        `سهم امروز: ${pointResult.dailyCount} از ${COMMENT_DAILY_POINT_LIMIT}`
       ].join("\n")
     );
   } catch {
     // Award remains valid even if the user has disabled private bot notifications.
   }
+}
+
+async function awardCommentPoint(env, profile, event) {
+  const now = Date.now();
+  const retentionCutoff = now - 120 * 24 * 60 * 60 * 1000;
+  const duplicateCutoff = now - 24 * 60 * 60 * 1000;
+  const ledger = (Array.isArray(profile.commentRewardLedger) ? profile.commentRewardLedger : [])
+    .filter((item) => Date.parse(item.at || 0) >= retentionCutoff);
+  const postKey = `${event.chatId}:${event.threadId}`;
+  const messageKey = `${event.chatId}:${event.messageId}`;
+  if (ledger.some((item) => item.postKey === postKey || item.messageKey === messageKey)) {
+    return { ok: true, duplicate: true, balance: Number(profile.pointsBalance || 0) };
+  }
+  if (ledger.some((item) => item.commentHash === event.commentHash && Date.parse(item.at || 0) >= duplicateCutoff)) {
+    return { ok: true, duplicate: true, balance: Number(profile.pointsBalance || 0) };
+  }
+
+  const dailyCount = profile.commentRewardDailyDate === event.dateKey
+    ? Number(profile.commentRewardDailyCount || 0)
+    : 0;
+  if (dailyCount >= COMMENT_DAILY_POINT_LIMIT) {
+    return { ok: false, limitReached: true, balance: Number(profile.pointsBalance || 0) };
+  }
+
+  const nextDailyCount = dailyCount + 1;
+  const updated = {
+    ...profile,
+    pointsBalance: Number(profile.pointsBalance || 0) + COMMENT_POINT_REWARD,
+    pointsLifetimeEarned: Number(profile.pointsLifetimeEarned || 0) + COMMENT_POINT_REWARD,
+    pointsUpdatedAt: new Date(now).toISOString(),
+    commentRewardCount: Number(profile.commentRewardCount || 0) + 1,
+    commentPointsEarned: Number(profile.commentPointsEarned || 0) + COMMENT_POINT_REWARD,
+    lastCommentRewardAt: new Date(now).toISOString(),
+    commentRewardDailyDate: event.dateKey,
+    commentRewardDailyCount: nextDailyCount,
+    commentRewardLedger: [...ledger, {
+      postKey,
+      messageKey,
+      commentHash: event.commentHash,
+      at: new Date(now).toISOString()
+    }].slice(-500)
+  };
+  await env.BOT_KV.put(`profile:${profile.userId}`, JSON.stringify(updated));
+  return { ok: true, balance: updated.pointsBalance, dailyCount: nextDailyCount };
 }
 
 function configuredDiscussionGroupUsernames(env) {
@@ -1056,42 +1085,8 @@ function isCommentDiscussionGroup(env, chat) {
 
 async function ensurePrivateMainChannelMembership(env, chatId, userId, forceCheck = false) {
   if (isAdmin(env, userId)) return true;
-  const cacheKey = `main_channel_member:${userId}`;
-  if (!forceCheck) {
-    const cached = await getJson(env, cacheKey);
-    if (cached?.member) return true;
-  }
-
-  let member = false;
-  try {
-    const result = await telegram(env, "getChatMember", {
-      chat_id: env.CHANNEL_ID || CHANNEL_USERNAME,
-      user_id: userId
-    });
-    const status = result.result?.status;
-    member = ["creator", "administrator", "member"].includes(status)
-      || (status === "restricted" && result.result?.is_member === true);
-  } catch (error) {
-    const errorKey = "main_channel_membership_check_error";
-    if (!(await env.BOT_KV.get(errorKey))) {
-      await env.BOT_KV.put(errorKey, "1", { expirationTtl: 60 * 60 });
-      await safeNotifyAdmin(
-        env,
-        `⚠️ بررسی عضویت ${CHANNEL_USERNAME} انجام نشد. مطمئن شو ربات در کانال اصلی ادمین است.\n${String(error?.message || error)}`
-      );
-    }
-  }
-
-  if (member) {
-    await env.BOT_KV.put(
-      cacheKey,
-      JSON.stringify({ member: true, checkedAt: new Date().toISOString() }),
-      { expirationTtl: MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS }
-    );
-    return true;
-  }
-
-  await env.BOT_KV.delete(cacheKey);
+  const membership = await checkMainChannelMembership(env, userId, forceCheck);
+  if (membership.member) return true;
   await sendMessage(
     env,
     chatId,
@@ -1114,28 +1109,9 @@ async function enforceMainChannelMembership(env, message) {
   const userId = String(message.from.id);
   if (isAdmin(env, userId)) return true;
 
-  const cacheKey = `main_channel_member:${userId}`;
-  const cached = await getJson(env, cacheKey);
-  if (cached?.member) return true;
-
-  let member = false;
-  try {
-    const result = await telegram(env, "getChatMember", {
-      chat_id: env.CHANNEL_ID || CHANNEL_USERNAME,
-      user_id: userId
-    });
-    const status = result.result?.status;
-    member = ["creator", "administrator", "member"].includes(status)
-      || (status === "restricted" && result.result?.is_member === true);
-  } catch (error) {
-    const errorKey = "main_channel_membership_check_error";
-    if (!(await env.BOT_KV.get(errorKey))) {
-      await env.BOT_KV.put(errorKey, "1", { expirationTtl: 60 * 60 });
-      await safeNotifyAdmin(
-        env,
-        `⚠️ بررسی عضویت ${CHANNEL_USERNAME} انجام نشد. مطمئن شو ربات در کانال جدید ادمین است.\n${String(error?.message || error)}`
-      );
-    }
+  const membership = await checkMainChannelMembership(env, userId);
+  if (membership.member) return true;
+  if (membership.error) {
     try {
       if (await isTelegramChatAdmin(env, message.chat.id, userId)) return true;
     } catch {
@@ -1145,25 +1121,53 @@ async function enforceMainChannelMembership(env, message) {
     return false;
   }
 
-  if (!member && await isTelegramChatAdmin(env, message.chat.id, userId)) {
-    await env.BOT_KV.put(
-      cacheKey,
-      JSON.stringify({ member: true, adminBypass: true, checkedAt: new Date().toISOString() }),
-      { expirationTtl: MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS }
-    );
-    return true;
-  }
-  if (member) {
-    await env.BOT_KV.put(
-      cacheKey,
-      JSON.stringify({ member: true, checkedAt: new Date().toISOString() }),
-      { expirationTtl: MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS }
-    );
-    return true;
-  }
+  if (await isTelegramChatAdmin(env, message.chat.id, userId)) return true;
 
   await removeNonMemberGroupMessage(env, message);
   return false;
+}
+
+async function checkMainChannelMembership(env, userId, forceCheck = false) {
+  const now = Date.now();
+  const cacheKey = String(userId);
+  const cached = mainChannelMembershipCache.get(cacheKey);
+  if (!forceCheck && cached && cached.expiresAt > now) return cached;
+  if (cached) mainChannelMembershipCache.delete(cacheKey);
+
+  try {
+    const result = await telegram(env, "getChatMember", {
+      chat_id: env.CHANNEL_ID || CHANNEL_USERNAME,
+      user_id: userId
+    });
+    const status = result.result?.status;
+    const member = ["creator", "administrator", "member"].includes(status)
+      || (status === "restricted" && result.result?.is_member === true);
+    const record = {
+      member,
+      error: false,
+      expiresAt: now + (member ? MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS * 1000 : 30 * 1000)
+    };
+    mainChannelMembershipCache.set(cacheKey, record);
+    pruneMainChannelMembershipCache(now);
+    return record;
+  } catch (error) {
+    if (now - mainChannelMembershipErrorNoticeAt >= 60 * 60 * 1000) {
+      mainChannelMembershipErrorNoticeAt = now;
+      await safeNotifyAdmin(
+        env,
+        `⚠️ بررسی عضویت ${CHANNEL_USERNAME} انجام نشد. مطمئن شو ربات در کانال اصلی ادمین است.\n${String(error?.message || error)}`
+      );
+    }
+    return { member: false, error: true, expiresAt: now + 15 * 1000 };
+  }
+}
+
+function pruneMainChannelMembershipCache(now = Date.now()) {
+  if (mainChannelMembershipCache.size <= GROUP_REPEAT_CACHE_LIMIT) return;
+  for (const [key, record] of mainChannelMembershipCache) {
+    if (record.expiresAt <= now) mainChannelMembershipCache.delete(key);
+    if (mainChannelMembershipCache.size <= GROUP_REPEAT_CACHE_LIMIT) break;
+  }
 }
 
 function hasUserGeneratedGroupContent(message) {
@@ -7507,7 +7511,10 @@ async function safeDeleteTelegramMessage(env, chatId, messageId) {
 
 async function showPoints(env, chatId, userId) {
   const profile = await ensurePointAccount(env, userId);
-  const commentPointsToday = Number(await env.BOT_KV.get(`comment_daily_reward:${tehranDateKey(new Date().toISOString())}:${userId}`) || 0);
+  const currentDateKey = tehranDateKey(new Date().toISOString());
+  const commentPointsToday = profile?.commentRewardDailyDate === currentDateKey
+    ? Number(profile.commentRewardDailyCount || 0)
+    : 0;
   const isBull = profile?.type === "bull";
   const earningLines = isBull
     ? [
