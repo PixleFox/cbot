@@ -29,7 +29,7 @@ Create and bind a KV namespace with this exact binding name:
 
 - `BOT_KV`
 
-The bot must be admin in both destination channels to publish posts. It must also be admin in `@cclubmain` and `@cuckoldgaps` so it can verify channel membership and delete messages from non-members.
+The bot must be admin in both destination channels and in `@cuckoldgaping` and `@cclubgap`. Membership enforcement and moderation run in both groups; comment points are awarded only for qualified comments under media posts in `@cuckoldgaping`.
 
 Consultation slots should be added by the admin with:
 

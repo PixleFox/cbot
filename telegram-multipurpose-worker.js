@@ -2,7 +2,8 @@ import { strToU8, zipSync } from "fflate";
 
 const CHANNEL_USERNAME = "@cclubmain";
 const MEDIA_CHANNEL_USERNAME = "@cclubmedia1";
-const DISCUSSION_GROUP_USERNAME = "@cuckoldgaps";
+const DISCUSSION_GROUP_USERNAMES = ["@cuckoldgaping", "@cclubgap"];
+const COMMENT_DISCUSSION_GROUP_USERNAME = "@cuckoldgaping";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
 const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-v2.png";
 const BOT_SHORT_DESCRIPTION = "C Club | تست غیرت، ارسال محتوا، نوبت و پشتیبانی";
@@ -942,13 +943,11 @@ async function handleMessage(message, env) {
 }
 
 async function handleDiscussionGroupMessage(env, message) {
-  const expectedUsername = String(env.DISCUSSION_GROUP_USERNAME || DISCUSSION_GROUP_USERNAME).replace(/^@/, "").toLowerCase();
-  const currentUsername = String(message.chat?.username || "").replace(/^@/, "").toLowerCase();
-  if (!expectedUsername || currentUsername !== expectedUsername) return;
+  if (!isConfiguredDiscussionGroup(env, message.chat)) return;
 
   const chatId = String(message.chat.id);
   if (message.is_automatic_forward) {
-    if (message.photo?.length || message.video?.file_id) {
+    if (isCommentDiscussionGroup(env, message.chat) && (message.photo?.length || message.video?.file_id)) {
       await env.BOT_KV.put(`media_comment_thread:${chatId}:${message.message_id}`, "1", { expirationTtl: 60 * 60 * 24 * 120 });
     }
     return;
@@ -957,6 +956,7 @@ async function handleDiscussionGroupMessage(env, message) {
 
   if (!(await enforceMainChannelMembership(env, message))) return;
   if (await moderateDiscussionGroupMessage(env, message)) return;
+  if (!isCommentDiscussionGroup(env, message.chat)) return;
 
   const userId = String(message.from.id);
   if (await getActiveBan(env, userId)) return;
@@ -1026,6 +1026,29 @@ async function handleDiscussionGroupMessage(env, message) {
   } catch {
     // Award remains valid even if the user has disabled private bot notifications.
   }
+}
+
+function configuredDiscussionGroupUsernames(env) {
+  const configured = String(env.DISCUSSION_GROUP_USERNAMES || "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .map((value) => value.startsWith("@") ? value : `@${value}`);
+  return [...new Set(configured.length ? configured : DISCUSSION_GROUP_USERNAMES)];
+}
+
+function isConfiguredDiscussionGroup(env, chat) {
+  const username = chat?.username ? `@${String(chat.username).toLowerCase()}` : "";
+  return Boolean(username && configuredDiscussionGroupUsernames(env).includes(username));
+}
+
+function isCommentDiscussionGroup(env, chat) {
+  const configured = String(env.COMMENT_DISCUSSION_GROUP_USERNAME || COMMENT_DISCUSSION_GROUP_USERNAME)
+    .trim()
+    .toLowerCase();
+  const expected = configured.startsWith("@") ? configured : `@${configured}`;
+  const username = chat?.username ? `@${String(chat.username).toLowerCase()}` : "";
+  return username === expected;
 }
 
 async function enforceMainChannelMembership(env, message) {
@@ -1147,7 +1170,7 @@ async function moderateDiscussionGroupMessage(env, message) {
     await safeNotifyAdmin(env, `⚠️ حذف پیام متخلف در گپ ناموفق بود.\n${String(error?.message || error)}`);
   }
 
-  const strikeKey = `group_mod_strike:${chatId}:${userId}`;
+  const strikeKey = `group_mod_strike:${userId}`;
   const previous = await getJson(env, strikeKey);
   const strikeCount = Number(previous?.strikeCount || 0) + 1;
   const userLabel = message.from.username
@@ -1157,11 +1180,7 @@ async function moderateDiscussionGroupMessage(env, message) {
   const now = new Date().toISOString();
 
   if (strikeCount >= 2) {
-    await telegram(env, "banChatMember", {
-      chat_id: chatId,
-      user_id: userId,
-      revoke_messages: true
-    });
+    const failedTargets = await banUserFromDiscussionGroups(env, userId);
     await env.BOT_KV.put(strikeKey, JSON.stringify({
       strikeCount,
       status: "banned",
@@ -1170,6 +1189,9 @@ async function moderateDiscussionGroupMessage(env, message) {
       lastMessageId: message.message_id,
       updatedAt: now
     }));
+    if (failedTargets.length) {
+      await safeNotifyAdmin(env, `⚠️ اخراج کاربر ${userId} از این گروه‌ها ناموفق بود: ${failedTargets.join("، ")}`);
+    }
     await sendMessage(
       env,
       chatId,
@@ -1183,28 +1205,7 @@ async function moderateDiscussionGroupMessage(env, message) {
   }
 
   const untilDate = Math.floor(Date.now() / 1000) + GROUP_MUTE_SECONDS;
-  await telegram(env, "restrictChatMember", {
-    chat_id: chatId,
-    user_id: userId,
-    until_date: untilDate,
-    use_independent_chat_permissions: true,
-    permissions: {
-      can_send_messages: false,
-      can_send_audios: false,
-      can_send_documents: false,
-      can_send_photos: false,
-      can_send_videos: false,
-      can_send_video_notes: false,
-      can_send_voice_notes: false,
-      can_send_polls: false,
-      can_send_other_messages: false,
-      can_add_web_page_previews: false,
-      can_change_info: false,
-      can_invite_users: false,
-      can_pin_messages: false,
-      can_manage_topics: false
-    }
-  });
+  const failedTargets = await restrictUserInDiscussionGroups(env, userId, untilDate);
   await env.BOT_KV.put(strikeKey, JSON.stringify({
     strikeCount,
     status: "muted",
@@ -1214,6 +1215,9 @@ async function moderateDiscussionGroupMessage(env, message) {
     lastMessageId: message.message_id,
     updatedAt: now
   }));
+  if (failedTargets.length) {
+    await safeNotifyAdmin(env, `⚠️ سکوت کاربر ${userId} در این گروه‌ها ناموفق بود: ${failedTargets.join("، ")}`);
+  }
   await sendMessage(
     env,
     chatId,
@@ -1224,6 +1228,56 @@ async function moderateDiscussionGroupMessage(env, message) {
     ].join("\n")
   );
   return true;
+}
+
+async function banUserFromDiscussionGroups(env, userId) {
+  const failed = [];
+  for (const target of configuredDiscussionGroupUsernames(env)) {
+    try {
+      await telegram(env, "banChatMember", {
+        chat_id: target,
+        user_id: userId,
+        revoke_messages: true
+      });
+    } catch {
+      failed.push(target);
+    }
+  }
+  return failed;
+}
+
+async function restrictUserInDiscussionGroups(env, userId, untilDate) {
+  const failed = [];
+  const permissions = {
+    can_send_messages: false,
+    can_send_audios: false,
+    can_send_documents: false,
+    can_send_photos: false,
+    can_send_videos: false,
+    can_send_video_notes: false,
+    can_send_voice_notes: false,
+    can_send_polls: false,
+    can_send_other_messages: false,
+    can_add_web_page_previews: false,
+    can_change_info: false,
+    can_invite_users: false,
+    can_pin_messages: false,
+    can_manage_topics: false
+  };
+  for (const target of configuredDiscussionGroupUsernames(env)) {
+    try {
+      await telegram(env, "restrictChatMember", {
+        chat_id: target,
+        user_id: userId,
+        until_date: untilDate,
+        use_independent_chat_permissions: true,
+        permissions
+      });
+    } catch {
+      failed.push(target);
+    }
+  }
+  return failed;
 }
 
 function detectGroupModerationViolation(message) {
@@ -1354,7 +1408,7 @@ function hasSuspiciousGroupLink(message, rawText) {
 
     if (["t.me", "telegram.me"].includes(host)) {
       const allowedTelegramTargets = [
-        "cuckoldgaps", "cclubmedia1", "cclubmain", "cucksclubbot",
+        "cuckoldgaping", "cclubgap", "cclubmedia1", "cclubmain", "cucksclubbot",
         "+y2fjepdjagkxm2fk", "+-0j3tcozqmm1zjjk"
       ];
       const target = path.split(/[/?#]/)[0];
@@ -2934,7 +2988,7 @@ async function blockFakeSubmission(env, query, kind, submissionId) {
 
 async function banUserFromCClubChats(env, userId) {
   const targets = [
-    env.DISCUSSION_GROUP_USERNAME || DISCUSSION_GROUP_USERNAME,
+    ...configuredDiscussionGroupUsernames(env),
     env.CHANNEL_ID || CHANNEL_USERNAME,
     env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME
   ];
@@ -2955,7 +3009,7 @@ async function banUserFromCClubChats(env, userId) {
 
 async function unbanUserFromCClubChats(env, userId) {
   const targets = [
-    env.DISCUSSION_GROUP_USERNAME || DISCUSSION_GROUP_USERNAME,
+    ...configuredDiscussionGroupUsernames(env),
     env.CHANNEL_ID || CHANNEL_USERNAME,
     env.MEDIA_CHANNEL_ID || MEDIA_CHANNEL_USERNAME
   ];
