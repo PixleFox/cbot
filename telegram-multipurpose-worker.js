@@ -704,6 +704,7 @@ async function handleMessage(message, env) {
   if (text === "/start") {
     await rememberKnownBotUser(env, message.from);
     await clearState(env, userId);
+    if (!(await ensurePrivateMainChannelMembership(env, chatId, userId))) return;
     await sendHome(env, chatId);
     return;
   }
@@ -717,6 +718,8 @@ async function handleMessage(message, env) {
     await sendAdminPanel(env, chatId);
     return;
   }
+
+  if (!isAdmin(env, userId) && !(await ensurePrivateMainChannelMembership(env, chatId, userId))) return;
 
   if (text === "/cancel") {
     await clearState(env, userId);
@@ -1049,6 +1052,61 @@ function isCommentDiscussionGroup(env, chat) {
   const expected = configured.startsWith("@") ? configured : `@${configured}`;
   const username = chat?.username ? `@${String(chat.username).toLowerCase()}` : "";
   return username === expected;
+}
+
+async function ensurePrivateMainChannelMembership(env, chatId, userId, forceCheck = false) {
+  if (isAdmin(env, userId)) return true;
+  const cacheKey = `main_channel_member:${userId}`;
+  if (!forceCheck) {
+    const cached = await getJson(env, cacheKey);
+    if (cached?.member) return true;
+  }
+
+  let member = false;
+  try {
+    const result = await telegram(env, "getChatMember", {
+      chat_id: env.CHANNEL_ID || CHANNEL_USERNAME,
+      user_id: userId
+    });
+    const status = result.result?.status;
+    member = ["creator", "administrator", "member"].includes(status)
+      || (status === "restricted" && result.result?.is_member === true);
+  } catch (error) {
+    const errorKey = "main_channel_membership_check_error";
+    if (!(await env.BOT_KV.get(errorKey))) {
+      await env.BOT_KV.put(errorKey, "1", { expirationTtl: 60 * 60 });
+      await safeNotifyAdmin(
+        env,
+        `⚠️ بررسی عضویت ${CHANNEL_USERNAME} انجام نشد. مطمئن شو ربات در کانال اصلی ادمین است.\n${String(error?.message || error)}`
+      );
+    }
+  }
+
+  if (member) {
+    await env.BOT_KV.put(
+      cacheKey,
+      JSON.stringify({ member: true, checkedAt: new Date().toISOString() }),
+      { expirationTtl: MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS }
+    );
+    return true;
+  }
+
+  await env.BOT_KV.delete(cacheKey);
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🔒 عضویت در کانال اصلی الزامی است.",
+      "",
+      "برای استفاده از ثبت‌نام، تست، ارسال محتوا، امتیازها، رزرو، پشتیبانی و تمام خدمات C Club ابتدا عضو کانال اصلی شو.",
+      "بعد از عضویت، دکمه «بررسی مجدد عضویت» را بزن."
+    ].join("\n"),
+    keyboard([
+      [{ text: "🟢 عضویت در کانال اصلی", url: "https://t.me/cclubmain" }],
+      [{ text: "✅ بررسی مجدد عضویت", callback_data: "membership:check" }]
+    ])
+  );
+  return false;
 }
 
 async function enforceMainChannelMembership(env, message) {
@@ -1449,6 +1507,17 @@ async function handleCallback(query, env) {
 
   if (query.message.chat?.type !== "private" && !data.startsWith("post:") && !data.startsWith("proof:")) return;
   if (!isAdmin(env, userId) && await notifyIfBanned(env, chatId, userId)) return;
+
+  if (data === "membership:check") {
+    if (await ensurePrivateMainChannelMembership(env, chatId, userId, true)) {
+      await sendMessage(env, chatId, "✅ عضویت شما در کانال اصلی تأیید شد. منوی ربات برایت فعال است.");
+      await sendHome(env, chatId);
+    }
+    return;
+  }
+
+  if (query.message.chat?.type === "private" && !isAdmin(env, userId)
+    && !(await ensurePrivateMainChannelMembership(env, chatId, userId))) return;
 
   if (data === "reg:start") {
     await startRegistration(env, chatId, userId, query.from);

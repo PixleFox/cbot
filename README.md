@@ -31,6 +31,8 @@ Create and bind a KV namespace with this exact binding name:
 
 The bot must be admin in both destination channels and in `@cuckoldgaping` and `@cclubgap`. Membership enforcement and moderation run in both groups; comment points are awarded only for qualified comments under media posts in `@cuckoldgaping`.
 
+Membership in `@cclubmain` is mandatory for every private bot workflow and for posting in either discussion group. Non-members receive join and recheck buttons and cannot continue until Telegram confirms membership.
+
 Consultation slots should be added by the admin with:
 
 ```text
