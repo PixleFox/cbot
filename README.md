@@ -21,6 +21,7 @@ Set these Worker variables/secrets in Cloudflare:
 - `MEDIA_CHANNEL_ID` is set as `@cclubmedia1` for approved user photo/video posts.
 - Every new post published in `@cclubmedia1`, including manual channel posts, is automatically forwarded to `@cclubmain` through Telegram `channel_post` updates.
 - Failed photo posts originally scheduled from November 19, 2026 onward are automatically recovered and rescheduled at one media post per free day.
+- The previous bull-registration special post is reused once every Friday at its original Tehran time; a default registration post is used if the archived post is unavailable.
 
 Create and bind a KV namespace with this exact binding name:
 

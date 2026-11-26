@@ -556,6 +556,7 @@ export default {
     ctx.waitUntil((async () => {
       const migrationQueued = await ensureChannelMigrationBroadcast(env);
       await scheduleFailedMediaBackfill(env);
+      await publishWeeklyBullRegistrationPost(env);
       await Promise.all([
         migrationQueued ? Promise.resolve() : processBroadcastQueue(env),
         publishDueSpecialPosts(env),
@@ -7236,6 +7237,72 @@ async function getSpecialPosts(env) {
 
 async function saveSpecialPosts(env, posts) {
   await env.BOT_KV.put("list:special_posts", JSON.stringify(posts));
+}
+
+async function publishWeeklyBullRegistrationPost(env) {
+  const now = new Date();
+  const tehran = getTehranParts(now);
+  if (tehran.weekday !== 5) return;
+
+  const posts = await getSpecialPosts(env);
+  const candidates = posts
+    .filter(isBullRegistrationSpecialPost)
+    .sort((a, b) => Date.parse(b.canceledAt || b.createdAt || 0) - Date.parse(a.canceledAt || a.createdAt || 0));
+  const source = candidates[0] || null;
+  const targetTime = getTehranHourMinute(source?.scheduledAt, 18, 0);
+  const currentTime = getTehranHourMinute(now.toISOString(), 0, 0);
+  if ((currentTime.hour * 60 + currentTime.minute) < (targetTime.hour * 60 + targetTime.minute)) return;
+
+  const dateKey = tehranDateKey(now.toISOString());
+  const deliveryKey = `weekly_bull_registration:${dateKey}`;
+  if (await env.BOT_KV.get(deliveryKey)) return;
+  await env.BOT_KV.put(deliveryKey, "processing", { expirationTtl: 30 * 60 });
+
+  try {
+    if (source?.status === "scheduled") {
+      source.status = "canceled";
+      source.canceledAt = new Date().toISOString();
+      source.canceledBy = "system_weekly_bull_registration";
+      await saveSpecialPosts(env, posts);
+    }
+
+    const weeklyPost = source || {
+      kind: "text",
+      fileId: "",
+      text: [
+        "🟢 ثبت‌نام و تأیید بول در C Club",
+        "",
+        "اگر به‌عنوان بول ثبت‌نام کرده‌ای، می‌توانی مراحل اثبات را داخل ربات کامل کنی و بعد از بررسی ادمین، پروفایل تأییدشده داشته باشی.",
+        "",
+        "برای شروع وارد ربات شو، ثبت‌نام را کامل کن و گزینه «اثبات به عنوان بول» را بزن."
+      ].join("\n"),
+      buttonText: "🟢 شروع ثبت‌نام بول",
+      buttonUrl: "https://t.me/cucksclubbot"
+    };
+
+    await sendSpecialPostMessage(env, env.CHANNEL_ID || CHANNEL_USERNAME, weeklyPost);
+    await env.BOT_KV.put(deliveryKey, "sent", { expirationTtl: 14 * 24 * 60 * 60 });
+  } catch (error) {
+    await safeNotifyAdmin(env, `⚠️ ارسال هفتگی پیام ثبت‌نام بول ناموفق بود.\n\n${String(error?.message || error)}`);
+  }
+}
+
+function isBullRegistrationSpecialPost(post) {
+  const text = cleanText(post?.text || "").replace(/\u200c/g, " ");
+  return text.includes("بول") && (text.includes("ثبت نام") || text.includes("اثبات"));
+}
+
+function getTehranHourMinute(value, fallbackHour, fallbackMinute) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return { hour: fallbackHour, minute: fallbackMinute };
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tehran",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return { hour: Number(map.hour), minute: Number(map.minute) };
 }
 
 async function sendSpecialPostMessage(env, chatId, post, includeCancel = false) {
