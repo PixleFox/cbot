@@ -23,6 +23,7 @@ Set these Worker variables/secrets in Cloudflare:
 - Every new post published in `@cclubmedia1`, including manual channel posts, is automatically forwarded to `@cclubmain` through Telegram `channel_post` updates.
 - Failed photo posts originally scheduled from November 19, 2026 onward are automatically recovered and rescheduled at one media post per free day.
 - The previous bull-registration special post is reused once every Friday at its original Tehran time; a default registration post is used if the archived post is unavailable.
+- Engagement campaigns run in a four-week rotation on Saturdays and Tuesdays at 20:00 Tehran, with a separate verified-bull reminder every Friday. Bot recipients are filtered at delivery time so only eligible users receive each campaign; channel campaigns are published to `@cclubmain`.
 
 Create and bind a KV namespace with this exact binding name:
 

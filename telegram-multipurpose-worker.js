@@ -50,6 +50,103 @@ const CHANNEL_MIGRATION_MESSAGE = [
   "",
   "برای مشاهده اطلاعیه‌ها و محتوای اصلی، همین حالا عضو کانال جدید شو."
 ].join("\n");
+const ENGAGEMENT_CAMPAIGN_ANCHOR_MS = Date.UTC(2026, 10, 28);
+const ENGAGEMENT_CAMPAIGNS = {
+  1: {
+    body: [
+      "🧪 فکر می‌کنی چقدر خودت را می‌شناسی؟",
+      "",
+      "تست غیرت C Club را انجام بده، جواب‌هایت را صادقانه انتخاب کن و تیپ شخصیتی خودت را ببین.",
+      "این آزمون برای خودشناسی است و نتیجه آن در پروفایلت ذخیره می‌شود."
+    ].join("\n"),
+    buttonText: "🧪 شروع تست غیرت",
+    callbackData: "menu:test",
+    filter: "untested",
+    channel: true
+  },
+  2: {
+    body: [
+      "🟢 ثبت‌نامت کامل شده، اما تأییدت هنوز باقی مانده است.",
+      "",
+      "با یک‌بار تکمیل اثبات، قابلیت‌های مخصوص پروفایل تأییدشده برایت فعال می‌شود. اطلاعات را واقعی و مرحله‌به‌مرحله بفرست."
+    ].join("\n"),
+    buttonText: "🧾 تکمیل اثبات",
+    callbackData: "proof:start",
+    filter: "unverified_proof"
+  },
+  3: {
+    body: [
+      "🤝 بخش آشنایی بول و کاکولد فعال است.",
+      "",
+      "کارت معرفی بساز، افراد تأییدشده را با دکمه‌های قبلی و بعدی ببین و فقط بعد از پذیرش دوطرفه راه تماس دریافت کن.",
+      "عکس‌های اثبات در این بخش نمایش داده نمی‌شوند."
+    ].join("\n"),
+    buttonText: "🤝 ورود به بخش آشنایی",
+    callbackData: "directory:start",
+    filter: "verified_match"
+  },
+  4: {
+    body: [
+      "⭐ این هفته امتیازت را بیشتر کن!",
+      "",
+      "با انتشار محتوای تأییدشده و فعالیت مفید در گپ امتیاز بگیر. امتیازها برای استفاده از خدمات اختصاصی C Club ذخیره می‌شوند."
+    ].join("\n"),
+    buttonText: "⭐ مشاهده امتیاز من",
+    callbackData: "points:show",
+    filter: "verified_points"
+  },
+  5: {
+    body: [
+      "✍️ حرفی داری که جای دیگری نمی‌توانی بگویی؟",
+      "",
+      "اعترافت را برای C Club بفرست. بعد از بررسی، بدون نمایش مشخصات شخصی تو در کانال منتشر می‌شود. متن باید حداقل ۱۰ کلمه باشد."
+    ].join("\n"),
+    buttonText: "✍️ ارسال اعتراف",
+    callbackData: "post:type:confession",
+    filter: "registered",
+    channel: true
+  },
+  6: {
+    body: [
+      "🎬 محتوای جذابی برای انتشار داری؟",
+      "",
+      "عکس یا فیلمت را بفرست؛ محتوا قبل از انتشار بررسی می‌شود و پس از انتشار موفق، امتیاز آن خودکار به حسابت اضافه خواهد شد."
+    ].join("\n"),
+    buttonText: "🎬 ارسال عکس یا فیلم",
+    callbackData: "post:type:media",
+    filter: "verified_submitter"
+  },
+  7: {
+    body: [
+      "🎁 امتیازهای تو فقط یک عدد نیستند.",
+      "",
+      "با امتیازت می‌توانی از خدماتی مثل مشاوره، ساخت عکس، ساخت فیلم و سرویس‌های اختصاصی استفاده کنی. موجودی و راه‌های کسب امتیاز را ببین."
+    ].join("\n"),
+    buttonText: "⭐ خدمات و امتیازها",
+    callbackData: "points:show",
+    filter: "verified_cuckold"
+  },
+  8: {
+    body: [
+      "🟢 ثبت‌نام و تأیید بول در C Club",
+      "",
+      "اگر به‌عنوان بول ثبت‌نام کرده‌ای، مراحل اثبات را کامل کن. بعد از بررسی ادمین، پروفایل تأییدشده و دسترسی بخش آشنایی برایت فعال می‌شود."
+    ].join("\n"),
+    buttonText: "🧾 اثبات به عنوان بول",
+    callbackData: "proof:start",
+    filter: "unverified_bull"
+  },
+  9: {
+    body: [
+      "👤 کارت معرفی تو هنوز فعال نیست.",
+      "",
+      "یک عکس انتخابی و معرفی کوتاه ثبت کن تا افراد تأییدشده طرف مقابل بتوانند تو را ببینند. آیدی تلگرام فقط بعد از قبول ارتباط نمایش داده می‌شود."
+    ].join("\n"),
+    buttonText: "➕ ساخت کارت معرفی",
+    callbackData: "directory:start",
+    filter: "directory_inactive"
+  }
+};
 const SERVICE_COSTS = { release: 5, custom_video: 15, gif: 10, custom_image: 5, consultation: 1 };
 const CUSTOM_IMAGE_SCENARIOS = {
   selfie_two_men: "بین دو مرد، در حال گرفتن سلفی",
@@ -558,6 +655,7 @@ export default {
       const migrationQueued = await ensureChannelMigrationBroadcast(env);
       await scheduleFailedMediaBackfill(env);
       await publishWeeklyBullRegistrationPost(env);
+      await scheduleEngagementCampaign(env);
       await Promise.all([
         migrationQueued ? Promise.resolve() : processBroadcastQueue(env),
         publishDueSpecialPosts(env),
@@ -5922,9 +6020,12 @@ async function notifyVerifiedCuckoldsAboutSlot(env, slot) {
     "",
     isRelease ? "مسیر رزرو: تخلیه آب بیغیرتی" : "مسیر رزرو: نوبت مشاوره"
   ].join("\n");
+  const extra = keyboard([[
+    { text: isRelease ? "💧 رزرو زمان تخلیه" : "📅 رزرو مشاوره", callback_data: isRelease ? "release:start" : "menu:booking" }
+  ]]);
 
   const firstBatch = recipients.slice(0, BROADCAST_BATCH_SIZE);
-  const result = await sendBroadcastBatch(env, firstBatch, body);
+  const result = await sendBroadcastBatch(env, firstBatch, body, extra);
   const remaining = recipients.slice(BROADCAST_BATCH_SIZE);
   if (remaining.length) {
     const queue = (await getJson(env, "broadcast_queue")) || [];
@@ -5932,6 +6033,7 @@ async function notifyVerifiedCuckoldsAboutSlot(env, slot) {
       id: shortId(),
       adminChatId: String(env.ADMIN_CHAT_ID),
       body,
+      extra,
       recipients: remaining,
       sent: result.sent,
       failed: result.failed,
@@ -5954,18 +6056,143 @@ async function getProfileSnapshots(env) {
   return [...byUser.values()];
 }
 
-async function sendBroadcastBatch(env, recipients, body) {
+async function scheduleEngagementCampaign(env) {
+  const now = new Date();
+  const tehran = getTehranParts(now);
+  const campaignId = engagementCampaignIdForDate(tehran);
+  if (!campaignId) return;
+
+  const targetTime = campaignId === 8 ? { hour: 18, minute: 30 } : { hour: 20, minute: 0 };
+  const currentTime = getTehranHourMinute(now.toISOString(), 0, 0);
+  if ((currentTime.hour * 60 + currentTime.minute) < (targetTime.hour * 60 + targetTime.minute)) return;
+
+  const campaign = ENGAGEMENT_CAMPAIGNS[campaignId];
+  if (!campaign) return;
+  const dateKey = tehranDateKey(now.toISOString());
+  const markerKey = `engagement_campaign:${dateKey}:${campaignId}`;
+  const marker = (await getJson(env, markerKey)) || {
+    campaignId,
+    dateKey,
+    botQueued: false,
+    channelSent: !campaign.channel,
+    createdAt: new Date().toISOString()
+  };
+  if (marker.status === "complete") return;
+
+  if (!marker.botQueued) {
+    const queue = (await getJson(env, "broadcast_queue")) || [];
+    const jobId = `engagement:${dateKey}:${campaignId}`;
+    const alreadyQueued = queue.some((job) => job.id === jobId);
+    if (!alreadyQueued && queue.length >= 10) return;
+
+    if (!alreadyQueued) {
+      const recipients = (await getProfileSnapshots(env)).map((profile) => String(profile.userId));
+      if (recipients.length) {
+        queue.push({
+          id: jobId,
+          adminChatId: String(env.ADMIN_CHAT_ID),
+          body: campaign.body,
+          extra: keyboard([[{ text: campaign.buttonText, callback_data: campaign.callbackData }]]),
+          filter: campaign.filter,
+          campaignId,
+          recipients,
+          sent: 0,
+          failed: 0,
+          skipped: 0,
+          total: recipients.length,
+          notifyAdminOnComplete: false,
+          createdAt: new Date().toISOString()
+        });
+        await env.BOT_KV.put("broadcast_queue", JSON.stringify(queue));
+      }
+    }
+    marker.botQueued = true;
+    marker.botQueuedAt = new Date().toISOString();
+    await env.BOT_KV.put(markerKey, JSON.stringify(marker), { expirationTtl: 60 * 60 * 24 * 45 });
+  }
+
+  if (!marker.channelSent) {
+    try {
+      await sendMessage(
+        env,
+        env.CHANNEL_ID || CHANNEL_USERNAME,
+        appendCClubPostFooter(campaign.body, TELEGRAM_MESSAGE_LIMIT),
+        keyboard([[{ text: campaign.buttonText, url: "https://t.me/cucksclubbot" }]])
+      );
+      marker.channelSent = true;
+      marker.channelSentAt = new Date().toISOString();
+    } catch (error) {
+      const previousErrorAt = Date.parse(marker.channelErrorAt || 0);
+      marker.channelError = String(error?.message || error);
+      marker.channelErrorAt = new Date().toISOString();
+      await env.BOT_KV.put(markerKey, JSON.stringify(marker), { expirationTtl: 60 * 60 * 24 * 45 });
+      if (!previousErrorAt || Date.now() - previousErrorAt >= 60 * 60 * 1000) {
+        await safeNotifyAdmin(env, `⚠️ انتشار کمپین ${campaignId} در کانال ناموفق بود.\n\n${marker.channelError}`);
+      }
+      return;
+    }
+  }
+
+  marker.status = "complete";
+  marker.completedAt = new Date().toISOString();
+  await env.BOT_KV.put(markerKey, JSON.stringify(marker), { expirationTtl: 60 * 60 * 24 * 45 });
+}
+
+function engagementCampaignIdForDate(tehran) {
+  if (tehran.weekday === 5) return 8;
+  const localDateMs = Date.UTC(tehran.year, tehran.month - 1, tehran.day);
+  const daysSinceAnchor = Math.floor((localDateMs - ENGAGEMENT_CAMPAIGN_ANCHOR_MS) / (24 * 60 * 60 * 1000));
+  if (daysSinceAnchor < 0) return 0;
+  const cycleDay = ((daysSinceAnchor % 28) + 28) % 28;
+  return ({ 0: 1, 3: 2, 7: 3, 10: 4, 14: 5, 17: 6, 21: 7, 24: 9 })[cycleDay] || 0;
+}
+
+async function shouldReceiveEngagementCampaign(env, userId, filter) {
+  if (!filter) return true;
+  const profile = await getProfile(env, userId);
+  if (!profile?.registered) return false;
+  const role = directoryRole(profile);
+  if (filter === "registered") return true;
+  if (filter === "untested") {
+    return !profile.testCount && !profile.lastTestResult && !(Array.isArray(profile.testHistory) && profile.testHistory.length);
+  }
+  if (filter === "unverified_proof") {
+    return (profile.type === "cuckold" && !profile.cuckoldVerified)
+      || (profile.type === "bull" && !profile.bullVerified);
+  }
+  if (filter === "verified_match") return Boolean(role);
+  if (filter === "verified_points") return isVerifiedPointsProfile(profile);
+  if (filter === "verified_submitter") {
+    return (profile.type === "cuckold" && profile.cuckoldVerified)
+      || (profile.type === "hotwife" && profile.hotwifeVerified);
+  }
+  if (filter === "verified_cuckold") return profile.type === "cuckold" && profile.cuckoldVerified;
+  if (filter === "unverified_bull") return profile.type === "bull" && !profile.bullVerified;
+  if (filter === "directory_inactive") {
+    if (!role) return false;
+    const card = await getJson(env, `directory:${userId}`);
+    return card?.status !== "active";
+  }
+  return false;
+}
+
+async function sendBroadcastBatch(env, recipients, body, extra = {}, filter = "") {
   let sent = 0;
   let failed = 0;
+  let skipped = 0;
   for (const userId of recipients) {
     try {
-      await sendMessage(env, userId, body);
+      if (filter && !(await shouldReceiveEngagementCampaign(env, userId, filter))) {
+        skipped += 1;
+        continue;
+      }
+      await sendMessage(env, userId, body, extra);
       sent += 1;
     } catch {
       failed += 1;
     }
   }
-  return { sent, failed };
+  return { sent, failed, skipped };
 }
 
 async function processBroadcastQueue(env) {
@@ -5973,11 +6200,13 @@ async function processBroadcastQueue(env) {
   if (!queue.length) return;
 
   const job = queue[0];
-  const batch = job.recipients.slice(0, BROADCAST_BATCH_SIZE);
-  const result = await sendBroadcastBatch(env, batch, job.body);
+  const batchSize = job.filter ? Math.min(6, BROADCAST_BATCH_SIZE) : BROADCAST_BATCH_SIZE;
+  const batch = job.recipients.slice(0, batchSize);
+  const result = await sendBroadcastBatch(env, batch, job.body, job.extra || {}, job.filter || "");
   job.sent += result.sent;
   job.failed += result.failed;
-  job.recipients = job.recipients.slice(BROADCAST_BATCH_SIZE);
+  job.skipped = Number(job.skipped || 0) + Number(result.skipped || 0);
+  job.recipients = job.recipients.slice(batchSize);
 
   if (job.recipients.length) {
     queue[0] = job;
@@ -5999,7 +6228,7 @@ async function processBroadcastQueue(env) {
       await sendMessage(
         env,
         job.adminChatId,
-        `✅ ارسال گروهی کامل شد.\n\nکل گیرنده‌ها: ${job.total}\n✅ موفق: ${job.sent}\n❌ ناموفق: ${job.failed}`,
+        `✅ ارسال گروهی کامل شد.\n\nکل گیرنده‌ها: ${job.total}\n✅ موفق: ${job.sent}\n⏭ ردشده از فیلتر: ${job.skipped || 0}\n❌ ناموفق: ${job.failed}`,
         keyboard(ADMIN_MENU)
       );
     }
