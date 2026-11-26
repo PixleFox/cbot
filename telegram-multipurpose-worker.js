@@ -426,6 +426,7 @@ const TEST_TYPES = [
 const MAIN_MENU = [
   [{ text: "🧪 تست غیرت", callback_data: "menu:test" }],
   [{ text: "⭐ امتیاز من", callback_data: "points:show" }],
+  [{ text: "🤝 آشنایی بول و کاکولد", callback_data: "directory:start" }],
   [
     { text: "🎬 ارسال عکس و فیلم", callback_data: "post:type:media" },
     { text: "✍️ ارسال اعتراف", callback_data: "post:type:confession" }
@@ -706,6 +707,16 @@ async function handleMessage(message, env) {
 
   if (state?.mode === "support_text") {
     await finishSupportTicket(env, message, text);
+    return;
+  }
+
+  if (state?.mode === "directory_wait_photo") {
+    await handleDirectoryPhoto(env, message, state);
+    return;
+  }
+
+  if (state?.mode === "directory_wait_bio") {
+    await handleDirectoryBio(env, message, state, text);
     return;
   }
 
@@ -1328,6 +1339,72 @@ async function handleCallback(query, env) {
     return;
   }
 
+  if (data === "directory:start" || data === "directory:hub") {
+    await openDirectoryHub(env, query);
+    return;
+  }
+
+  if (data === "directory:setup" || data === "directory:edit") {
+    await startDirectorySetup(env, query);
+    return;
+  }
+
+  if (data === "directory:confirm") {
+    await confirmDirectoryProfile(env, query);
+    return;
+  }
+
+  if (data === "directory:cancel") {
+    await clearState(env, userId);
+    await openDirectoryHub(env, query);
+    return;
+  }
+
+  if (data === "directory:browse") {
+    await startDirectoryBrowse(env, query);
+    return;
+  }
+
+  if (data === "directory:next" || data === "directory:prev") {
+    await moveDirectoryBrowse(env, query, data === "directory:next" ? 1 : -1);
+    return;
+  }
+
+  if (data === "directory:connect") {
+    await requestDirectoryConnection(env, query);
+    return;
+  }
+
+  if (data === "directory:hide") {
+    await hideCurrentDirectoryProfile(env, query);
+    return;
+  }
+
+  if (data === "directory:pause") {
+    await pauseDirectoryProfile(env, query);
+    return;
+  }
+
+  if (data === "directory:resume") {
+    await resumeDirectoryProfile(env, query);
+    return;
+  }
+
+  if (data === "directory:requests") {
+    await listDirectoryRequests(env, query);
+    return;
+  }
+
+  if (data.startsWith("directory:accept:")) {
+    await reviewDirectoryRequest(env, query, data.replace("directory:accept:", ""), true);
+    return;
+  }
+
+  if (data.startsWith("directory:reject:")) {
+    await reviewDirectoryRequest(env, query, data.replace("directory:reject:", ""), false);
+    return;
+  }
+
   if (data === "custom_image:start") {
     if (!(await ensureRegistered(env, chatId, userId))) return;
     if (!(await ensureVerifiedCuckold(env, chatId, userId))) return;
@@ -1778,6 +1855,7 @@ async function sendHelp(env, chatId) {
       "ارسال اعتراف برای همه کاربران ثبت‌نام‌کرده باز است.",
       "ارسال عکس و فیلم فقط برای کاکولدهای تایید شده و هاتوایف‌های تایید شده فعال می‌شود.",
       "عضویت VIP و تخلیه آب بیغیرتی فقط برای کاکولدهای تایید شده است.",
+      "بخش آشنایی فقط بین بول‌ها و کاکولدهای تأییدشده فعال است و راه تماس بعد از پذیرش دوطرفه نمایش داده می‌شود.",
       "",
       "قبل از ارسال عکس یا فیلم، حتماً راهنمای ارسال عکس را بخوان.",
       "",
@@ -6528,6 +6606,547 @@ async function awardPostPoints(env, post, currentProfile = null) {
   return changePoints(env, post.userId, amount, `earn:post:${post.id}`, `انتشار پست ${post.kind}`);
 }
 
+function directoryRole(profile) {
+  if (profile?.registered && profile.type === "bull" && profile.bullVerified) return "bull";
+  if (profile?.registered && profile.type === "cuckold" && profile.cuckoldVerified) return "cuckold";
+  return "";
+}
+
+function oppositeDirectoryRole(role) {
+  return role === "bull" ? "cuckold" : role === "cuckold" ? "bull" : "";
+}
+
+function directoryRoleLabel(role) {
+  return role === "bull" ? "بول تأییدشده" : role === "cuckold" ? "کاکولد تأییدشده" : "-";
+}
+
+function directoryMaritalLabel(value) {
+  return ({ single: "مجرد", married: "متأهل", relationship: "در رابطه" })[value] || value || "-";
+}
+
+async function ensureDirectoryMember(env, chatId, userId) {
+  const profile = await getProfile(env, userId);
+  const role = directoryRole(profile);
+  if (role) return { profile, role };
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🔒 بخش آشنایی هنوز برای شما فعال نیست.",
+      "",
+      "این بخش فقط برای بول‌ها و کاکولدهای تأییدشده است. بعد از تکمیل و تأیید اثبات، دسترسی خودکار فعال می‌شود."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
+  return null;
+}
+
+async function openDirectoryHub(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const member = await ensureDirectoryMember(env, chatId, userId);
+  if (!member) return;
+
+  await clearState(env, userId);
+  await safeDeleteTelegramMessage(env, chatId, query.message.message_id);
+  const card = await getJson(env, `directory:${userId}`);
+  const pendingCount = (await getList(env, "directory_requests"))
+    .filter((request) => String(request.toUserId) === userId && request.status === "pending").length;
+  const rows = [];
+  if (card?.status === "active") {
+    rows.push([{ text: `🔎 مشاهده ${member.role === "bull" ? "کاکولدها" : "بول‌ها"}`, callback_data: "directory:browse" }]);
+    rows.push([
+      { text: "✏️ ویرایش معرفی", callback_data: "directory:edit" },
+      { text: "⏸ توقف نمایش", callback_data: "directory:pause" }
+    ]);
+  } else if (card) {
+    rows.push([{ text: "▶️ فعال‌کردن دوباره معرفی", callback_data: "directory:resume" }]);
+    rows.push([{ text: "✏️ ویرایش معرفی", callback_data: "directory:edit" }]);
+  } else {
+    rows.push([{ text: "➕ ساخت کارت معرفی", callback_data: "directory:setup" }]);
+  }
+  rows.push([{ text: `📨 درخواست‌های دریافتی${pendingCount ? ` (${pendingCount})` : ""}`, callback_data: "directory:requests" }]);
+  rows.push(...BACK_TO_MENU);
+
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "🤝 آشنایی بول و کاکولد",
+      "",
+      `وضعیت شما: ${directoryRoleLabel(member.role)}`,
+      `نمایش کارت معرفی: ${card?.status === "active" ? "🟢 فعال" : "⚪️ غیرفعال"}`,
+      "",
+      "🔐 آیدی تلگرام شما در کارت‌ها نمایش داده نمی‌شود. راه تماس فقط وقتی باز می‌شود که درخواست ارتباط را قبول کنید.",
+      "عکس‌های اثبات نیز هرگز در این بخش استفاده نمی‌شوند."
+    ].join("\n"),
+    keyboard(rows)
+  );
+}
+
+async function startDirectorySetup(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const member = await ensureDirectoryMember(env, chatId, userId);
+  if (!member) return;
+
+  await setState(env, userId, { mode: "directory_wait_photo" });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "📸 ساخت کارت معرفی",
+      "",
+      "یک عکس واضح و واقعی از خودت بفرست. این عکس فقط برای اعضای تأییدشده طرف مقابل نمایش داده می‌شود.",
+      "",
+      "• عکس اثبات استفاده نمی‌شود؛ عکس را خودت انتخاب می‌کنی.",
+      "• عکس مخفیانه، فیک، دارای واترمارک یا بی‌کیفیت نفرست.",
+      "• با ادامه، اجازه نمایش نام ثبت‌شده، سن، شهر، وضعیت رابطه، عکس و متن معرفی را می‌دهی.",
+      "",
+      "حالا عکس را بفرست:"
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
+}
+
+async function handleDirectoryPhoto(env, message, state) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  if (!message.photo?.length) {
+    await sendMessage(env, chatId, "❌ در این مرحله فقط یک عکس معمولی بفرست.", keyboard(BACK_TO_MENU));
+    return;
+  }
+  const photo = message.photo[message.photo.length - 1];
+  await setState(env, userId, { ...state, mode: "directory_wait_bio", photoFileId: photo.file_id });
+  await sendMessage(
+    env,
+    chatId,
+    [
+      "✅ عکس دریافت شد.",
+      "",
+      "حالا در ۱۰ تا ۵۰۰ کاراکتر خودت و نوع ارتباطی که دنبالش هستی را معرفی کن.",
+      "آیدی، شماره تماس یا لینک داخل متن ننویس؛ راه تماس بعد از تأیید دوطرفه باز می‌شود."
+    ].join("\n"),
+    keyboard(BACK_TO_MENU)
+  );
+}
+
+async function handleDirectoryBio(env, message, state, text) {
+  const chatId = String(message.chat.id);
+  const userId = String(message.from.id);
+  const bio = cleanText(text);
+  const containsContact = countUrls(bio) > 0
+    || /@[A-Za-z0-9_]{5,32}/.test(bio)
+    || /(?:\+?\d[\d\s-]{7,}\d)/.test(normalizeDigits(bio));
+  if (!message.text || bio.length < 10 || bio.length > 500 || containsContact) {
+    await sendMessage(env, chatId, "❌ متن معرفی باید بین ۱۰ تا ۵۰۰ کاراکتر و بدون آیدی، شماره تماس یا لینک باشد. دوباره بفرست:", keyboard(BACK_TO_MENU));
+    return;
+  }
+  const member = await ensureDirectoryMember(env, chatId, userId);
+  if (!member) return;
+  const draft = buildDirectoryCard(member.profile, member.role, state.photoFileId, bio);
+  await setState(env, userId, { mode: "directory_confirm", draft });
+  await sendPhoto(
+    env,
+    chatId,
+    draft.photoFileId,
+    `${directoryCardCaption(draft)}\n\nاگر این اطلاعات درست است، نمایش کارت را فعال کن.`,
+    keyboard([
+      [{ text: "✅ تأیید و فعال‌سازی", callback_data: "directory:confirm" }],
+      [{ text: "🔄 ساخت دوباره", callback_data: "directory:setup" }],
+      [{ text: "❌ لغو", callback_data: "directory:cancel" }]
+    ])
+  );
+}
+
+function buildDirectoryCard(profile, role, photoFileId, bio) {
+  const now = new Date().toISOString();
+  return {
+    id: String(profile.userId),
+    userId: String(profile.userId),
+    role,
+    displayName: profile.name || "بدون نام",
+    age: profile.age || "-",
+    city: profile.city || "-",
+    marital: profile.marital || "",
+    photoFileId,
+    bio,
+    status: "active",
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function directoryCardCaption(card) {
+  return [
+    `🟢 ${directoryRoleLabel(card.role)}`,
+    "",
+    `👤 نام: ${card.displayName || "-"}`,
+    `🎂 سن: ${card.age || "-"}`,
+    `📍 شهر: ${card.city || "-"}`,
+    `💍 وضعیت رابطه: ${directoryMaritalLabel(card.marital)}`,
+    "",
+    "📝 معرفی:",
+    card.bio || "-"
+  ].join("\n");
+}
+
+async function confirmDirectoryProfile(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  const member = await ensureDirectoryMember(env, chatId, userId);
+  if (!member || state?.mode !== "directory_confirm" || !state.draft?.photoFileId) {
+    await sendMessage(env, chatId, "این پیش‌نمایش منقضی شده است. دوباره کارت معرفی را بساز.", keyboard(BACK_TO_MENU));
+    return;
+  }
+
+  const previous = await getJson(env, `directory:${userId}`);
+  const card = {
+    ...state.draft,
+    role: member.role,
+    status: "active",
+    createdAt: previous?.createdAt || state.draft.createdAt,
+    updatedAt: new Date().toISOString()
+  };
+  await saveDirectoryCard(env, card);
+  await clearState(env, userId);
+  await safeDeleteTelegramMessage(env, chatId, query.message.message_id);
+  await sendMessage(
+    env,
+    chatId,
+    "✅ کارت معرفی فعال شد. حالا می‌توانی پروفایل‌های تأییدشده طرف مقابل را ببینی.",
+    keyboard([
+      [{ text: "🔎 شروع مشاهده", callback_data: "directory:browse" }],
+      [{ text: "🤝 منوی آشنایی", callback_data: "directory:hub" }]
+    ])
+  );
+}
+
+async function saveDirectoryCard(env, card) {
+  await env.BOT_KV.put(`directory:${card.userId}`, JSON.stringify(card));
+  const list = await getList(env, "directory_profiles");
+  const updated = [...list.filter((item) => String(item.userId) !== String(card.userId)), card].slice(-500);
+  await env.BOT_KV.put("list:directory_profiles", JSON.stringify(updated));
+}
+
+async function startDirectoryBrowse(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const member = await ensureDirectoryMember(env, chatId, userId);
+  if (!member) return;
+  const ownCard = await getJson(env, `directory:${userId}`);
+  if (ownCard?.status !== "active") {
+    await sendMessage(env, chatId, "برای مشاهده افراد، ابتدا کارت معرفی خودت را فعال کن.", keyboard([[{ text: "➕ ساخت کارت معرفی", callback_data: "directory:setup" }], ...BACK_TO_MENU]));
+    return;
+  }
+
+  const hidden = new Set((await getJson(env, `directory_hidden:${userId}`)) || []);
+  const targetRole = oppositeDirectoryRole(member.role);
+  const byUser = new Map();
+  for (const card of await getList(env, "directory_profiles")) {
+    if (card?.status === "active" && card.role === targetRole && String(card.userId) !== userId && !hidden.has(String(card.userId))) {
+      byUser.set(String(card.userId), card);
+    }
+  }
+  const ids = [...byUser.keys()];
+  if (!ids.length) {
+    await sendMessage(env, chatId, "فعلاً پروفایل فعال جدیدی برای نمایش وجود ندارد. بعداً دوباره بررسی کن.", keyboard([[{ text: "🤝 منوی آشنایی", callback_data: "directory:hub" }], ...BACK_TO_MENU]));
+    return;
+  }
+
+  await setState(env, userId, { mode: "directory_browse", ids, index: 0 });
+  await showDirectoryCard(env, chatId, userId, query.message.message_id);
+}
+
+async function moveDirectoryBrowse(env, query, direction) {
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  if (state?.mode !== "directory_browse" || !state.ids?.length) {
+    await startDirectoryBrowse(env, query);
+    return;
+  }
+  const index = (Number(state.index || 0) + direction + state.ids.length) % state.ids.length;
+  await setState(env, userId, { ...state, index });
+  await showDirectoryCard(env, String(query.message.chat.id), userId, query.message.message_id);
+}
+
+async function showDirectoryCard(env, chatId, userId, previousMessageId = 0) {
+  let state = await getState(env, userId);
+  if (state?.mode !== "directory_browse" || !state.ids?.length) return;
+
+  for (let checked = 0; checked < state.ids.length; checked += 1) {
+    const index = Number(state.index || 0) % state.ids.length;
+    const targetUserId = String(state.ids[index]);
+    const [card, profile, ban] = await Promise.all([
+      getJson(env, `directory:${targetUserId}`),
+      getProfile(env, targetUserId),
+      getActiveBan(env, targetUserId)
+    ]);
+    if (card?.status === "active" && directoryRole(profile) === card.role && !ban) {
+      await setState(env, userId, { ...state, index, currentTargetUserId: targetUserId });
+      await safeDeleteTelegramMessage(env, chatId, previousMessageId);
+      await sendPhoto(
+        env,
+        chatId,
+        card.photoFileId,
+        directoryCardCaption(card),
+        keyboard([
+          [
+            { text: "⬅️ قبلی", callback_data: "directory:prev" },
+            { text: `${index + 1} از ${state.ids.length}`, callback_data: "directory:noop" },
+            { text: "بعدی ➡️", callback_data: "directory:next" }
+          ],
+          [{ text: "🤝 درخواست ارتباط", callback_data: "directory:connect" }],
+          [{ text: "🙈 دیگر نمایش نده", callback_data: "directory:hide" }],
+          [{ text: "↩️ منوی آشنایی", callback_data: "directory:hub" }]
+        ])
+      );
+      return;
+    }
+    state = { ...state, index: (index + 1) % state.ids.length };
+  }
+
+  await clearState(env, userId);
+  await safeDeleteTelegramMessage(env, chatId, previousMessageId);
+  await sendMessage(env, chatId, "فعلاً پروفایل معتبر دیگری برای نمایش وجود ندارد.", keyboard([[{ text: "🤝 منوی آشنایی", callback_data: "directory:hub" }], ...BACK_TO_MENU]));
+}
+
+async function requestDirectoryConnection(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  const targetUserId = String(state?.currentTargetUserId || "");
+  if (state?.mode !== "directory_browse" || !targetUserId || targetUserId === userId) {
+    await sendMessage(env, chatId, "این پروفایل دیگر در دسترس نیست. دوباره وارد فهرست شو.");
+    return;
+  }
+
+  const [requester, requesterCard, target, targetCard] = await Promise.all([
+    getProfile(env, userId),
+    getJson(env, `directory:${userId}`),
+    getProfile(env, targetUserId),
+    getJson(env, `directory:${targetUserId}`)
+  ]);
+  if (!requesterCard || requesterCard.status !== "active" || !targetCard || targetCard.status !== "active"
+    || oppositeDirectoryRole(directoryRole(requester)) !== directoryRole(target)) {
+    await sendMessage(env, chatId, "این پروفایل در حال حاضر امکان دریافت درخواست ندارد.");
+    return;
+  }
+
+  const pairKey = `directory_pair:${userId}:${targetUserId}`;
+  const existingId = await env.BOT_KV.get(pairKey);
+  if (existingId) {
+    const existing = await getJson(env, `directory_request:${existingId}`);
+    const message = existing?.status === "accepted"
+      ? "✅ ارتباط شما قبلاً تأیید شده است."
+      : "⏳ درخواست ارتباط قبلاً ارسال شده و منتظر پاسخ است.";
+    await sendMessage(env, chatId, message);
+    return;
+  }
+  const reverseId = await env.BOT_KV.get(`directory_pair:${targetUserId}:${userId}`);
+  if (reverseId) {
+    const reverse = await getJson(env, `directory_request:${reverseId}`);
+    if (reverse?.status === "pending") {
+      await sendMessage(
+        env,
+        chatId,
+        "📨 این کاربر قبلاً برایت درخواست ارتباط فرستاده است. از بخش درخواست‌های دریافتی پاسخ بده.",
+        keyboard([[{ text: "📨 مشاهده درخواست‌ها", callback_data: "directory:requests" }]])
+      );
+      return;
+    }
+    if (reverse?.status === "accepted") {
+      await sendMessage(env, chatId, "✅ ارتباط شما قبلاً تأیید شده است.");
+      return;
+    }
+  }
+
+  const request = {
+    id: shortId(),
+    fromUserId: userId,
+    toUserId: targetUserId,
+    fromName: requesterCard.displayName,
+    toName: targetCard.displayName,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  };
+  await env.BOT_KV.put(`directory_request:${request.id}`, JSON.stringify(request));
+  await env.BOT_KV.put(pairKey, request.id, { expirationTtl: 60 * 60 * 24 * 30 });
+  await putListItem(env, "directory_requests", request);
+
+  try {
+    await sendPhoto(
+      env,
+      targetUserId,
+      requesterCard.photoFileId,
+      [
+        "📨 درخواست ارتباط جدید",
+        "",
+        directoryCardCaption(requesterCard),
+        "",
+        "در صورت پذیرش، راه تماس تلگرامی هر دو طرف برای یکدیگر ارسال می‌شود."
+      ].join("\n"),
+      keyboard([[
+        { text: "✅ قبول ارتباط", callback_data: `directory:accept:${request.id}` },
+        { text: "❌ رد", callback_data: `directory:reject:${request.id}` }
+      ]])
+    );
+    await sendMessage(env, chatId, "✅ درخواست ارتباط ارسال شد. بعد از پاسخ طرف مقابل بهت خبر می‌دهیم.");
+  } catch (error) {
+    request.status = "delivery_failed";
+    request.reviewedAt = new Date().toISOString();
+    await env.BOT_KV.put(`directory_request:${request.id}`, JSON.stringify(request));
+    await updateListItem(env, "directory_requests", request.id, (item) => ({ ...item, status: request.status, reviewedAt: request.reviewedAt }));
+    await env.BOT_KV.delete(pairKey);
+    await sendMessage(env, chatId, "❌ فعلاً امکان رساندن درخواست به این کاربر وجود ندارد. یک پروفایل دیگر را انتخاب کن.");
+  }
+}
+
+async function reviewDirectoryRequest(env, query, requestId, accepted) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const request = await getJson(env, `directory_request:${requestId}`);
+  if (!request || request.status !== "pending" || String(request.toUserId) !== userId) {
+    await sendMessage(env, chatId, "این درخواست وجود ندارد یا قبلاً پاسخ داده شده است.");
+    return;
+  }
+
+  request.status = accepted ? "accepted" : "rejected";
+  request.reviewedAt = new Date().toISOString();
+  await env.BOT_KV.put(`directory_request:${request.id}`, JSON.stringify(request));
+  await updateListItem(env, "directory_requests", request.id, (item) => ({ ...item, status: request.status, reviewedAt: request.reviewedAt }));
+  try {
+    await telegram(env, "editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: query.message.message_id,
+      reply_markup: { inline_keyboard: [] }
+    });
+  } catch {
+    // The original request message may have been deleted.
+  }
+  if (!accepted) {
+    await env.BOT_KV.delete(`directory_pair:${request.fromUserId}:${request.toUserId}`);
+    await sendMessage(env, chatId, "❌ درخواست ارتباط رد شد.", keyboard([[{ text: "🤝 منوی آشنایی", callback_data: "directory:hub" }]]));
+    try {
+      await sendMessage(env, request.fromUserId, "درخواست ارتباط این بار پذیرفته نشد. می‌توانی پروفایل‌های دیگر را ببینی.", keyboard([[{ text: "🔎 ادامه مشاهده", callback_data: "directory:browse" }]]));
+    } catch {
+      // The requester may have blocked the bot.
+    }
+    return;
+  }
+
+  const [fromProfile, toProfile] = await Promise.all([
+    getProfile(env, request.fromUserId),
+    getProfile(env, request.toUserId)
+  ]);
+  const fromContact = directoryContactUrl(fromProfile, request.fromUserId);
+  const toContact = directoryContactUrl(toProfile, request.toUserId);
+  try {
+    await sendMessage(
+      env,
+      request.fromUserId,
+      `✅ ${request.toName || "کاربر مقابل"} درخواست ارتباط را قبول کرد.\n\nحالا می‌توانید مستقیماً در تلگرام گفتگو کنید.`,
+      keyboard([[{ text: "💬 شروع گفتگو", url: toContact }], [{ text: "🔎 ادامه مشاهده", callback_data: "directory:browse" }]])
+    );
+  } catch {
+    await safeNotifyAdmin(env, `⚠️ اطلاع‌رسانی پذیرش ارتباط به کاربر ${request.fromUserId} ناموفق بود.`);
+  }
+  await sendMessage(
+    env,
+    chatId,
+    `✅ ارتباط با ${request.fromName || "کاربر درخواست‌دهنده"} تأیید شد.`,
+    keyboard([[{ text: "💬 شروع گفتگو", url: fromContact }], [{ text: "🤝 منوی آشنایی", callback_data: "directory:hub" }]])
+  );
+}
+
+function directoryContactUrl(profile, userId) {
+  const username = normalizeTelegramHandle(profile?.username || "").replace(/^@/, "");
+  return username ? `https://t.me/${username}` : `tg://user?id=${userId}`;
+}
+
+async function listDirectoryRequests(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const member = await ensureDirectoryMember(env, chatId, userId);
+  if (!member) return;
+  const requests = (await getList(env, "directory_requests"))
+    .filter((request) => String(request.toUserId) === userId && request.status === "pending")
+    .slice(-10)
+    .reverse();
+  if (!requests.length) {
+    await sendMessage(env, chatId, "📨 درخواست ارتباط پاسخ‌داده‌نشده‌ای نداری.", keyboard([[{ text: "🤝 منوی آشنایی", callback_data: "directory:hub" }]]));
+    return;
+  }
+  const rows = [];
+  for (const request of requests) {
+    rows.push([
+      { text: `✅ قبول ${request.fromName || request.id}`, callback_data: `directory:accept:${request.id}` },
+      { text: "❌ رد", callback_data: `directory:reject:${request.id}` }
+    ]);
+  }
+  rows.push([{ text: "↩️ منوی آشنایی", callback_data: "directory:hub" }]);
+  await sendMessage(env, chatId, `📨 درخواست‌های ارتباط\n\n${requests.map((request) => `• ${request.fromName || "بدون نام"} | ${formatDateTime(request.createdAt)}`).join("\n")}`, keyboard(rows));
+}
+
+async function hideCurrentDirectoryProfile(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const state = await getState(env, userId);
+  const targetUserId = String(state?.currentTargetUserId || "");
+  if (state?.mode !== "directory_browse" || !targetUserId) return;
+  const hidden = new Set((await getJson(env, `directory_hidden:${userId}`)) || []);
+  hidden.add(targetUserId);
+  await env.BOT_KV.put(`directory_hidden:${userId}`, JSON.stringify([...hidden].slice(-200)));
+  const ids = state.ids.filter((id) => String(id) !== targetUserId);
+  if (!ids.length) {
+    await clearState(env, userId);
+    await safeDeleteTelegramMessage(env, chatId, query.message.message_id);
+    await sendMessage(env, chatId, "این پروفایل دیگر به تو نمایش داده نمی‌شود و فعلاً مورد دیگری وجود ندارد.", keyboard([[{ text: "🤝 منوی آشنایی", callback_data: "directory:hub" }]]));
+    return;
+  }
+  const index = Math.min(Number(state.index || 0), ids.length - 1);
+  await setState(env, userId, { ...state, ids, index, currentTargetUserId: "" });
+  await showDirectoryCard(env, chatId, userId, query.message.message_id);
+}
+
+async function pauseDirectoryProfile(env, query) {
+  const userId = String(query.from.id);
+  const card = await getJson(env, `directory:${userId}`);
+  if (card) {
+    card.status = "paused";
+    card.updatedAt = new Date().toISOString();
+    await saveDirectoryCard(env, card);
+  }
+  await openDirectoryHub(env, query);
+}
+
+async function resumeDirectoryProfile(env, query) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  const member = await ensureDirectoryMember(env, chatId, userId);
+  if (!member) return;
+  const card = await getJson(env, `directory:${userId}`);
+  if (!card) {
+    await startDirectorySetup(env, query);
+    return;
+  }
+  card.role = member.role;
+  card.status = "active";
+  card.updatedAt = new Date().toISOString();
+  await saveDirectoryCard(env, card);
+  await openDirectoryHub(env, query);
+}
+
+async function safeDeleteTelegramMessage(env, chatId, messageId) {
+  if (!messageId) return;
+  try {
+    await telegram(env, "deleteMessage", { chat_id: chatId, message_id: messageId });
+  } catch {
+    // Old messages may no longer be deletable; the flow can continue normally.
+  }
+}
+
 async function showPoints(env, chatId, userId) {
   const profile = await ensurePointAccount(env, userId);
   const commentPointsToday = Number(await env.BOT_KV.get(`comment_daily_reward:${tehranDateKey(new Date().toISOString())}:${userId}`) || 0);
@@ -6733,6 +7352,13 @@ async function banUser(env, userId, details = {}) {
     await env.BOT_KV.put(`ban:${userId}`, JSON.stringify(ban), { expirationTtl: USER_BAN_SECONDS });
   }
   await putListItem(env, "user_bans", ban);
+  const directoryCard = await getJson(env, `directory:${userId}`);
+  if (directoryCard?.status === "active") {
+    directoryCard.status = "paused";
+    directoryCard.pausedReason = "user_banned";
+    directoryCard.updatedAt = now.toISOString();
+    await saveDirectoryCard(env, directoryCard);
+  }
   return ban;
 }
 
@@ -6859,7 +7485,7 @@ async function getMainMenuForUser(env, userId) {
   const profile = await getProfile(env, userId);
   if (!profile?.registered) return LOCKED_MENU;
 
-  const rows = [...MAIN_MENU];
+  const rows = MAIN_MENU.filter((row) => directoryRole(profile) || row[0]?.callback_data !== "directory:start");
   if (profile.gender === "male" && profile.type === "cuckold" && !profile.cuckoldVerified) {
     rows.splice(1, 0, [{ text: "🧾 اثبات کاکولدی", callback_data: "proof:start" }]);
   }

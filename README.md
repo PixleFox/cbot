@@ -7,6 +7,7 @@ Cloudflare Worker bot for Telegram with:
 - Admin-defined consultation time slots
 - 30-minute consultation reminders for admin and user
 - User post submission with admin approval
+- Opt-in verified bull/cuckold directory with profile cards, browsing, hidden contact details, and mutual connection approval
 - Text/photo post preview for admin
 - Approved posts sent to `@cclubmain`
 - Admin panel with Excel-compatible CSV export
