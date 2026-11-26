@@ -18,8 +18,9 @@ Set these Worker variables/secrets in Cloudflare:
 - `BOT_TOKEN`
 - `ADMIN_CHAT_ID`
 - `CHANNEL_ID` is set as `@cclubmain` for confessions and special posts.
-- `MEDIA_CHANNEL_ID` is set as `@cclubmedia` for approved user photo/video posts.
-- Every new post published in `@cclubmedia`, including manual channel posts, is automatically forwarded to `@cclubmain` through Telegram `channel_post` updates.
+- `MEDIA_CHANNEL_ID` is set as `@cclubmedia1` for approved user photo/video posts.
+- Every new post published in `@cclubmedia1`, including manual channel posts, is automatically forwarded to `@cclubmain` through Telegram `channel_post` updates.
+- Failed photo posts originally scheduled from November 19, 2026 onward are automatically recovered and rescheduled at one media post per free day.
 
 Create and bind a KV namespace with this exact binding name:
 

@@ -5,7 +5,7 @@ compatibility_date = "2026-07-20"
 [vars]
 ADMIN_CHAT_ID = "7204112173"
 CHANNEL_ID = "@cclubmain"
-MEDIA_CHANNEL_ID = "@cclubmedia"
+MEDIA_CHANNEL_ID = "@cclubmedia1"
 DISCUSSION_GROUP_USERNAME = "@cuckoldgaps"
 
 [triggers]
@@ -16,4 +16,4 @@ binding = "BOT_KV"
 id = "618015e3fa1f46028300b92e16cf5da6"
 
 # Keep BOT_TOKEN only in Cloudflare Secrets, never in GitHub.
-# The bot must be an admin in @cclubmain, @cclubmedia, and @cuckoldgaps.
+# The bot must be an admin in @cclubmain, @cclubmedia1, and @cuckoldgaps.

@@ -1,7 +1,7 @@
 import { strToU8, zipSync } from "fflate";
 
 const CHANNEL_USERNAME = "@cclubmain";
-const MEDIA_CHANNEL_USERNAME = "@cclubmedia";
+const MEDIA_CHANNEL_USERNAME = "@cclubmedia1";
 const DISCUSSION_GROUP_USERNAME = "@cuckoldgaps";
 const EXCHANGE_GROUP_URL = "https://t.me/+Y2FjepdJAGkxM2Fk";
 const PHOTO_GUIDE_IMAGE_URL = "https://raw.githubusercontent.com/PixleFox/cbot/main/assets/photo-guide-v2.png";
@@ -38,6 +38,8 @@ const GROUP_REPEAT_CACHE_LIMIT = 2000;
 const MAIN_CHANNEL_MEMBERSHIP_CACHE_SECONDS = 2 * 60;
 const MAIN_CHANNEL_JOIN_WARNING_SECONDS = 30;
 const CHANNEL_MIGRATION_BROADCAST_ID = "cclubmain-2026-10-31";
+const MEDIA_BACKFILL_MIGRATION_KEY = "migration:media-backfill:cclubmedia1:2026-11-19";
+const MEDIA_BACKFILL_CUTOFF_MS = Date.parse("2026-11-18T20:30:00.000Z");
 const CHANNEL_MIGRATION_MESSAGE = [
   "📣 آدرس کانال اصلی C Club تغییر کرد",
   "",
@@ -553,6 +555,7 @@ export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil((async () => {
       const migrationQueued = await ensureChannelMigrationBroadcast(env);
+      await scheduleFailedMediaBackfill(env);
       await Promise.all([
         migrationQueued ? Promise.resolve() : processBroadcastQueue(env),
         publishDueSpecialPosts(env),
@@ -572,7 +575,7 @@ async function handleMediaChannelPost(message, env) {
   } catch (error) {
     await safeNotifyAdmin(
       env,
-      `⚠️ فوروارد خودکار یک پست از @cclubmedia به @cclubmain ناموفق بود.\n\nشناسه پیام: ${message.message_id}\n${String(error?.message || error)}`
+      `⚠️ فوروارد خودکار یک پست از @cclubmedia1 به @cclubmain ناموفق بود.\n\nشناسه پیام: ${message.message_id}\n${String(error?.message || error)}`
     );
   }
 }
@@ -1241,7 +1244,7 @@ function hasSuspiciousGroupLink(message, rawText) {
 
     if (["t.me", "telegram.me"].includes(host)) {
       const allowedTelegramTargets = [
-        "cuckoldgaps", "cclubmedia", "cclubmain", "cucksclubbot",
+        "cuckoldgaps", "cclubmedia1", "cclubmain", "cucksclubbot",
         "+y2fjepdjagkxm2fk", "+-0j3tcozqmm1zjjk"
       ];
       const target = path.split(/[/?#]/)[0];
@@ -6092,7 +6095,7 @@ function appendCClubPostFooter(value, maxLength = TELEGRAM_MESSAGE_LIMIT) {
     "@cclubmain",
     "",
     "🎬 کانال مدیا:",
-    "@cclubmedia",
+    "@cclubmedia1",
     "",
     "🤖 ربات ثبت‌نام:",
     "@cucksclubbot"
@@ -6108,7 +6111,7 @@ function appendCClubPostFooter(value, maxLength = TELEGRAM_MESSAGE_LIMIT) {
     if (index < Math.max(0, lines.length - 8)) return false;
     const current = line.trim().toLowerCase();
     const next = String(lines[index + 1] || "").trim().toLowerCase();
-    return ["@cuckzclub", "@cclubmain", "@cclubmedia"].includes(current) && next.startsWith("instagram:");
+    return ["@cuckzclub", "@cclubmain", "@cclubmedia", "@cclubmedia1"].includes(current) && next.startsWith("instagram:");
   });
   if (legacyStart >= 0) lines.splice(legacyStart);
 
@@ -6259,6 +6262,106 @@ async function getAvailablePublishDates(env, scheduleKind, limit = 8) {
   }
 
   return options;
+}
+
+async function scheduleFailedMediaBackfill(env) {
+  const migrationStatus = await env.BOT_KV.get(MEDIA_BACKFILL_MIGRATION_KEY);
+  if (migrationStatus === "done" || migrationStatus === "processing") return;
+
+  await env.BOT_KV.put(MEDIA_BACKFILL_MIGRATION_KEY, "processing", { expirationTtl: 10 * 60 });
+  try {
+    const now = Date.now();
+    const refs = await getPosts(env);
+    const candidateRefs = refs
+      .filter((post) => post.kind === "photo" && post.status === "publish_failed")
+      .filter((post) => {
+        const originalTime = Date.parse(post.scheduledAt || post.publishErrorAt || "");
+        return Number.isFinite(originalTime) && originalTime >= MEDIA_BACKFILL_CUTOFF_MS && originalTime <= now;
+      })
+      .sort((a, b) => Date.parse(a.scheduledAt || a.publishErrorAt) - Date.parse(b.scheduledAt || b.publishErrorAt));
+
+    if (!candidateRefs.length) {
+      await env.BOT_KV.put(MEDIA_BACKFILL_MIGRATION_KEY, "done");
+      return;
+    }
+
+    const dates = await getAvailablePublishDates(env, "media", candidateRefs.length);
+    const updatedById = new Map();
+    const scheduled = [];
+
+    for (let index = 0; index < candidateRefs.length && index < dates.length; index += 1) {
+      const ref = candidateRefs[index];
+      const post = (await getJson(env, `post:${ref.id}`)) || ref;
+      if (post.kind !== "photo" || post.status !== "publish_failed") {
+        updatedById.set(ref.id, post);
+        continue;
+      }
+
+      const option = dates[index];
+      const scheduledAt = tehranDateKeyToIso(option.dateKey, DEFAULT_POST_HOUR, DEFAULT_POST_MINUTE);
+      post.backfillOriginalScheduledAt = post.scheduledAt || "";
+      post.backfillRescheduledAt = new Date().toISOString();
+      post.backfillReason = "media_channel_replacement";
+      post.status = "scheduled";
+      post.scheduleKind = "media";
+      post.scheduledDate = option.dateKey;
+      post.scheduledAt = scheduledAt;
+      post.scheduledLabel = formatTehranSlot(scheduledAt);
+      post.scheduledBy = "system_media_backfill";
+      post.scheduledCreatedAt = new Date().toISOString();
+      post.publishError = "";
+      post.publishErrorAt = "";
+      await env.BOT_KV.put(`post:${post.id}`, JSON.stringify(post));
+      updatedById.set(post.id, post);
+      scheduled.push(post);
+    }
+
+    if (updatedById.size) {
+      const updatedRefs = refs.map((ref) => {
+        const post = updatedById.get(ref.id);
+        if (!post) return ref;
+        return {
+          ...ref,
+          status: post.status,
+          scheduleKind: post.scheduleKind,
+          scheduledDate: post.scheduledDate,
+          scheduledAt: post.scheduledAt,
+          scheduledLabel: post.scheduledLabel,
+          scheduledBy: post.scheduledBy,
+          backfillOriginalScheduledAt: post.backfillOriginalScheduledAt || "",
+          backfillRescheduledAt: post.backfillRescheduledAt || "",
+          backfillReason: post.backfillReason || "",
+          publishError: post.publishError || "",
+          publishErrorAt: post.publishErrorAt || ""
+        };
+      });
+      await env.BOT_KV.put("list:posts", JSON.stringify(updatedRefs));
+    }
+
+    if (scheduled.length === candidateRefs.length) {
+      await env.BOT_KV.put(MEDIA_BACKFILL_MIGRATION_KEY, "done");
+    } else {
+      await env.BOT_KV.delete(MEDIA_BACKFILL_MIGRATION_KEY);
+    }
+
+    if (scheduled.length) {
+      const lines = scheduled.map((post) => `${post.scheduledLabel} | عکس | کد ${post.id}`);
+      await safeNotifyAdmin(
+        env,
+        [
+          "✅ بازیابی عکس‌های منتشرنشده انجام شد.",
+          "",
+          `تعداد زمان‌بندی‌شده: ${scheduled.length}`,
+          "کانال جدید: @cclubmedia1",
+          "",
+          ...lines
+        ].join("\n")
+      );
+    }
+  } catch (error) {
+    await env.BOT_KV.delete(MEDIA_BACKFILL_MIGRATION_KEY);
+    await safeNotifyAdmin(env, `⚠️ زمان‌بندی مجدد عکس‌های منتشرنشده ناموفق بود.\n\n${String(error?.message || error)}`);
+  }
 }
 
 function isPublishDateTaken(posts, scheduleKind, dateKey, exceptPostId = "") {
@@ -7248,7 +7351,7 @@ async function publishDuePosts(env) {
           post.forwardStatus = "failed";
           post.forwardError = String(forwardError?.message || forwardError);
           post.nextForwardRetryAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-          await safeNotifyAdmin(env, `⚠️ پست ${post.id} در @cclubmedia منتشر شد، اما فوروارد به @cclubmain ناموفق بود و دوباره تلاش می‌شود.\n${post.forwardError}`);
+          await safeNotifyAdmin(env, `⚠️ پست ${post.id} در @cclubmedia1 منتشر شد، اما فوروارد به @cclubmain ناموفق بود و دوباره تلاش می‌شود.\n${post.forwardError}`);
         }
       }
 
