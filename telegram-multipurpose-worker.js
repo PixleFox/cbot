@@ -1892,7 +1892,13 @@ async function handleCallback(query, env) {
 
   if (data === "special:button:none") {
     if (!isAdmin(env, userId)) return;
-    await askSpecialPostSchedule(env, query, false);
+    await askSpecialPostChannel(env, query, false);
+    return;
+  }
+
+  if (data.startsWith("special:channel:")) {
+    if (!isAdmin(env, userId)) return;
+    await selectSpecialPostChannel(env, query, data.replace("special:channel:", ""));
     return;
   }
 
@@ -5369,13 +5375,13 @@ async function handleSpecialPostButtonUrl(env, message, state, text) {
 
   await setState(env, userId, {
     ...state,
-    mode: "special_wait_schedule",
+    mode: "special_wait_channel",
     draft: { ...state.draft, buttonUrl }
   });
-  await sendMessage(env, chatId, specialPostSchedulePrompt(), specialPostCancelKeyboard());
+  await sendSpecialPostChannelMenu(env, chatId);
 }
 
-async function askSpecialPostSchedule(env, query, withButton) {
+async function askSpecialPostChannel(env, query, withButton) {
   const userId = String(query.from.id);
   const state = await getState(env, userId);
   if (!state?.draft?.text) {
@@ -5384,7 +5390,33 @@ async function askSpecialPostSchedule(env, query, withButton) {
   }
 
   const draft = withButton ? state.draft : { ...state.draft, buttonText: "", buttonUrl: "" };
-  await setState(env, userId, { ...state, mode: "special_wait_schedule", draft });
+  await setState(env, userId, { ...state, mode: "special_wait_channel", draft });
+  await sendSpecialPostChannelMenu(env, String(query.message.chat.id));
+}
+
+async function sendSpecialPostChannelMenu(env, chatId) {
+  await sendMessage(env, chatId, "📣 این پست در کدام کانال منتشر شود؟", keyboard([
+    [{ text: "🟢 کانال اصلی | @cclubmain", callback_data: "special:channel:main" }],
+    [{ text: "🎬 کانال مدیا | @cclubmedia1", callback_data: "special:channel:media" }],
+    [{ text: "❌ لغو و برگشت", callback_data: "special:abort" }]
+  ]));
+}
+
+async function selectSpecialPostChannel(env, query, targetChannel) {
+  const chatId = String(query.message.chat.id);
+  const userId = String(query.from.id);
+  if (!["main", "media"].includes(targetChannel)) return;
+  const state = await getState(env, userId);
+  if (state?.mode !== "special_wait_channel" || !state?.draft?.text) {
+    await sendMessage(env, chatId, "❌ اطلاعات پست پیدا نشد. دوباره از ساخت پست ویژه شروع کن.", keyboard(ADMIN_MENU));
+    return;
+  }
+
+  await setState(env, userId, {
+    ...state,
+    mode: "special_wait_schedule",
+    draft: { ...state.draft, targetChannel }
+  });
   await sendMessage(env, String(query.message.chat.id), specialPostSchedulePrompt(), specialPostCancelKeyboard());
 }
 
@@ -5433,6 +5465,7 @@ async function finishSpecialPost(env, query, recurrence) {
     text: draft.text,
     buttonText: draft.buttonText || "",
     buttonUrl: draft.buttonUrl || "",
+    targetChannel: draft.targetChannel || "main",
     scheduledAt: draft.scheduledAt,
     recurrence,
     status: "scheduled",
@@ -5452,6 +5485,7 @@ async function finishSpecialPost(env, query, recurrence) {
       "✅ پست ویژه ساخته و زمان‌بندی شد.",
       "",
       `کد: ${post.id}`,
+      `کانال: ${specialPostTargetLabel(post.targetChannel)}`,
       `زمان اولین انتشار: ${formatDateTime(post.scheduledAt)}`,
       `تکرار: ${specialRecurrenceLabel(post.recurrence)}`
     ].join("\n")
@@ -5472,7 +5506,7 @@ async function listSpecialPosts(env, chatId) {
   const rows = [];
   for (const post of posts.slice(0, 25)) {
     const preview = cleanText(post.text).slice(0, 45);
-    lines.push(`${formatDateTime(post.scheduledAt)} | ${specialRecurrenceLabel(post.recurrence)} | ${preview}${post.text.length > 45 ? "..." : ""} | کد ${post.id}`);
+    lines.push(`${formatDateTime(post.scheduledAt)} | ${specialPostTargetLabel(post.targetChannel)} | ${specialRecurrenceLabel(post.recurrence)} | ${preview}${post.text.length > 45 ? "..." : ""} | کد ${post.id}`);
     rows.push([{ text: `❌ لغو ${post.id}`, callback_data: `special:cancel:${post.id}` }]);
   }
   rows.push([{ text: "↩️ پنل ادمین", callback_data: "admin:panel" }]);
@@ -5521,6 +5555,16 @@ function isValidButtonUrl(value) {
 
 function specialRecurrenceLabel(value) {
   return ({ none: "فقط یک‌بار", hourly: "هر ساعت", daily: "هر روز", weekly: "هر هفته" })[value] || "-";
+}
+
+function specialPostTargetLabel(value) {
+  return value === "media" ? "@cclubmedia1" : "@cclubmain";
+}
+
+function specialPostTargetChat(env, value) {
+  return value === "media"
+    ? (env.MEDIA_CHANNEL_ID || "@cclubmedia1")
+    : (env.CHANNEL_ID || CHANNEL_USERNAME);
 }
 
 async function listBannedUsers(env, chatId) {
@@ -8457,7 +8501,6 @@ async function sendSpecialPostMessage(env, chatId, post, includeCancel = false) 
 async function publishDueSpecialPosts(env) {
   const posts = await getSpecialPosts(env);
   const now = Date.now();
-  const targetChannel = env.CHANNEL_ID || CHANNEL_USERNAME;
   const due = posts
     .filter((post) => post.status === "scheduled" && Date.parse(post.scheduledAt) <= now)
     .filter((post) => !post.nextRetryAt || Date.parse(post.nextRetryAt) <= now)
@@ -8466,7 +8509,7 @@ async function publishDueSpecialPosts(env) {
 
   for (const post of due) {
     try {
-      await sendSpecialPostMessage(env, targetChannel, post);
+      await sendSpecialPostMessage(env, specialPostTargetChat(env, post.targetChannel), post);
       post.publishCount = Number(post.publishCount || 0) + 1;
       post.lastPublishedAt = new Date().toISOString();
       post.lastError = "";
